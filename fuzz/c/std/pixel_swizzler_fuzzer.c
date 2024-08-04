@@ -124,13 +124,17 @@ const char*  //
 fuzz_swizzle_interleaved_from_slice(wuffs_base__io_buffer* src, uint64_t hash) {
   uint8_t dst_palette_array[1024];
   uint8_t src_palette_array[1024];
-  if ((src->meta.wi - src->meta.ri) < 2048) {
-    return "fuzz: not enough data";
+  if ((src->meta.wi - src->meta.ri) >= 2048) {
+    memcpy(dst_palette_array, src->data.ptr + src->meta.ri, 1024);
+    src->meta.ri += 1024;
+    memcpy(src_palette_array, src->data.ptr + src->meta.ri, 1024);
+    src->meta.ri += 1024;
+  } else {
+    for (uint32_t i = 0; i < 1024; i++) {
+      dst_palette_array[i] = (uint8_t)i;
+      src_palette_array[i] = (uint8_t)i;
+    }
   }
-  memcpy(dst_palette_array, src->data.ptr + src->meta.ri, 1024);
-  src->meta.ri += 1024;
-  memcpy(src_palette_array, src->data.ptr + src->meta.ri, 1024);
-  src->meta.ri += 1024;
   wuffs_base__slice_u8 dst_palette =
       wuffs_base__make_slice_u8(&dst_palette_array[0], 1024);
   wuffs_base__slice_u8 src_palette =
@@ -178,17 +182,25 @@ fuzz_swizzle_interleaved_from_slice(wuffs_base__io_buffer* src, uint64_t hash) {
 
   // Position dst_slice and src_slice so that reading or writing one byte past
   // their end will cause a segmentation fault.
-  if ((src->meta.wi - src->meta.ri) < (dst_len + src_len)) {
-    return "fuzz: not enough data";
-  }
   wuffs_base__slice_u8 dst_slice =
       wuffs_base__make_slice_u8(dst_alloc + alloc_size - dst_len, dst_len);
-  memcpy(dst_slice.ptr, src->data.ptr + src->meta.ri, dst_len);
-  src->meta.ri += dst_len;
   wuffs_base__slice_u8 src_slice =
       wuffs_base__make_slice_u8(src_alloc + alloc_size - src_len, src_len);
-  memcpy(src_slice.ptr, src->data.ptr + src->meta.ri, src_len);
-  src->meta.ri += src_len;
+
+  // Fill in dst_slice and src_slice.
+  if ((src->meta.wi - src->meta.ri) >= (dst_len + src_len)) {
+    memcpy(dst_slice.ptr, src->data.ptr + src->meta.ri, dst_len);
+    src->meta.ri += dst_len;
+    memcpy(src_slice.ptr, src->data.ptr + src->meta.ri, src_len);
+    src->meta.ri += src_len;
+  } else {
+    for (size_t i = 0; i < dst_len; i++) {
+      dst_slice.ptr[i] = (uint8_t)i;
+    }
+    for (size_t i = 0; i < src_len; i++) {
+      src_slice.ptr[i] = (uint8_t)i;
+    }
+  }
 
   // When manually testing this program, enabling this code should lead to a
   // segmentation fault.
@@ -214,16 +226,34 @@ fuzz_swizzle_ycck(wuffs_base__io_buffer* src, uint64_t hash) {
   wuffs_base__pixel_format dst_pixfmt = wuffs_base__make_pixel_format(
       pixfmts[(0xFF & (hash >> 0)) % num_pixfmts]);
 
-  uint32_t width = (63 & (hash >> 8)) + 1;
-  uint32_t height = (63 & (hash >> 14)) + 1;
+  uint32_t x_min_incl = (63 & (hash >> 8)) + 1;
+  uint32_t x_max_excl = (63 & (hash >> 14)) + 1;
+  uint32_t y_min_incl = (63 & (hash >> 20)) + 1;
+  uint32_t y_max_excl = (63 & (hash >> 26)) + 1;
 
-  uint32_t width_in_mcus = (3 & (hash >> 20)) + 1;
-  uint32_t height_in_mcus = (3 & (hash >> 22)) + 1;
+  uint32_t width_in_mcus = (3 & (hash >> 32)) + 1;
+  uint32_t height_in_mcus = (3 & (hash >> 34)) + 1;
 
-  uint32_t allow_hv3 = 1 & (hash >> 24);
-  bool is_rgb_or_cmyk = 1 & (hash >> 25);
-  bool triangle_filter_for_2to1 = 1 & (hash >> 26);
-  bool use_4th_component = 1 & (hash >> 27);
+  uint32_t allow_hv3 = 1 & (hash >> 36);
+  bool is_rgb_or_cmyk = 1 & (hash >> 37);
+  bool triangle_filter_for_2to1 = 1 & (hash >> 38);
+  bool use_4th_component = 1 & (hash >> 39);
+
+  if (triangle_filter_for_2to1) {
+    x_min_incl = 0;
+    y_min_incl = 0;
+  } else {
+    if (x_min_incl > x_max_excl) {
+      uint32_t a = x_min_incl;
+      x_min_incl = x_max_excl;
+      x_max_excl = a;
+    }
+    if (y_min_incl > y_max_excl) {
+      uint32_t a = y_min_incl;
+      y_min_incl = y_max_excl;
+      y_max_excl = a;
+    }
+  }
 
   uint32_t possible_hv_values[2][4] = {
       {1, 1, 2, 4},
@@ -253,8 +283,10 @@ fuzz_swizzle_ycck(wuffs_base__io_buffer* src, uint64_t hash) {
       h0, wuffs_base__u32__max(h1, wuffs_base__u32__max(h2, h3)));
   uint32_t vmax = wuffs_base__u32__max(
       v0, wuffs_base__u32__max(v1, wuffs_base__u32__max(v2, v3)));
-  width = wuffs_base__u32__min(width, 8 * width_in_mcus * hmax);
-  height = wuffs_base__u32__min(height, 8 * height_in_mcus * vmax);
+  x_max_excl = x_min_incl + wuffs_base__u32__min(x_max_excl - x_min_incl,
+                                                 8 * width_in_mcus * hmax);
+  y_max_excl = y_min_incl + wuffs_base__u32__min(y_max_excl - y_min_incl,
+                                                 8 * height_in_mcus * vmax);
 
   static size_t dst_alloc_size = 0;
   if (dst_alloc_size == 0) {
@@ -271,7 +303,8 @@ fuzz_swizzle_ycck(wuffs_base__io_buffer* src, uint64_t hash) {
 
   wuffs_base__pixel_buffer dst_pixbuf;
   wuffs_base__pixel_config dst_pixcfg;
-  wuffs_base__pixel_config__set(&dst_pixcfg, dst_pixfmt.repr, 0, width, height);
+  wuffs_base__pixel_config__set(&dst_pixcfg, dst_pixfmt.repr, 0, x_max_excl,
+                                y_max_excl);
   uint64_t dst_pixbuf_len = wuffs_base__pixel_config__pixbuf_len(&dst_pixcfg);
   if (dst_pixbuf_len > dst_alloc_size) {
     return "fuzz: internal error: dst_alloc_size is too small";
@@ -368,7 +401,8 @@ fuzz_swizzle_ycck(wuffs_base__io_buffer* src, uint64_t hash) {
   uint8_t scratch_buffer[2048];
   wuffs_base__status status = wuffs_base__pixel_swizzler__swizzle_ycck(
       &swizzler, &dst_pixbuf, dst_palette,  //
-      width, height,                        //
+      x_min_incl, x_max_excl,               //
+      y_min_incl, y_max_excl,               //
       src0, src1, src2, src3,               //
       width0, width1, width2, width3,       //
       height0, height1, height2, height3,   //

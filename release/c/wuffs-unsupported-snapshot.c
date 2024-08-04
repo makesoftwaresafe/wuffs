@@ -175,12 +175,62 @@ extern "C" {
 #elif defined(_MSC_VER)  // (#if-chain ref AVOID_CPU_ARCH_1)
 
 #if defined(_M_X64)
-// We need <intrin.h> for the __cpuid function.
-#include <intrin.h>
+
+// On X86_64, Microsoft Visual C/C++ (MSVC) only supports SSE2 by default.
+// There are /arch:SSE2, /arch:AVX and /arch:AVX2 compiler flags (the AVX2 one
+// is roughly equivalent to X86_64_V3), but there is no /arch:SSE42 compiler
+// flag that's equivalent to X86_64_V2.
+//
+// For getting maximum performance with X86_64 MSVC and Wuffs, pass /arch:AVX2
+// (and then test on the oldest hardware you intend to support).
+//
+// Absent that compiler flag, either define one of the three macros listed
+// below or else the X86_64 SIMD code will be disabled and you'll get a #pragma
+// message stating this library "performs best with /arch:AVX2". This message
+// is harmless and ignorable, in that the non-SIMD code is still correct and
+// reasonably performant, but is a reminder that when combining Wuffs and MSVC,
+// some compiler configuration is required for maximum performance.
+//
+//  - WUFFS_CONFIG__DISABLE_MSVC_CPU_ARCH__X86_64_FAMILY
+//  - WUFFS_CONFIG__ENABLE_MSVC_CPU_ARCH__X86_64_V2 (enables SSE4.2 and below)
+//  - WUFFS_CONFIG__ENABLE_MSVC_CPU_ARCH__X86_64_V3 (enables AVX2 and below)
+//
+// Defining the first one (WUFFS_CONFIG__DISABLE_MSVC_CPU_ARCH__X86_64_FAMILY)
+// or defining none of those three (the default state) are equivalent (in that
+// both disable the SIMD code paths), other than that pragma message.
+//
+// When defining these WUFFS_CONFIG__ENABLE_ETC macros with MSVC, be aware that
+// some users report it leading to ICEs (Internal Compiler Errors), but other
+// users report no problems at all (and improved performance). It's unclear
+// exactly what combination of SIMD code and MSVC configuration lead to ICEs.
+// Do your own testing with your own MSVC version and configuration.
+//
+// https://github.com/google/wuffs/issues/148
+// https://github.com/google/wuffs/issues/151
+// https://developercommunity.visualstudio.com/t/fatal--error-C1001:-Internal-compiler-er/10703305
+//
+// Clang (including clang-cl) and GCC don't need this WUFFS_CONFIG__ETC macro
+// machinery, or having the Wuffs-the-library user to fiddle with compiler
+// flags, because they support "__attribute__((target(arg)))".
+#if defined(__AVX2__) || defined(__clang__) || \
+    defined(WUFFS_CONFIG__ENABLE_MSVC_CPU_ARCH__X86_64_V3)
 #define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64
 #define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64_V2
-#if defined(__AVX2__) || defined(__clang__)
+#define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64_V3
+#elif defined(WUFFS_CONFIG__ENABLE_MSVC_CPU_ARCH__X86_64_V2)
+#define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64
+#define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64_V2
+#elif !defined(WUFFS_CONFIG__DISABLE_MSVC_CPU_ARCH__X86_64_FAMILY)
+#pragma message("Wuffs with MSVC+X64 performs best with /arch:AVX2")
+#endif  // defined(__AVX2__) || defined(__clang__) || etc
 
+#if defined(WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64)
+
+#if defined(WUFFS_CONFIG__DISABLE_MSVC_CPU_ARCH__X86_64_FAMILY)
+#error "MSVC_CPU_ARCH simultaneously enabled and disabled"
+#endif
+
+#include <intrin.h>
 // intrin.h isn't enough for X64 SIMD, with clang-cl, if we want to use
 // "__attribute__((target(arg)))" without e.g. "/arch:AVX".
 //
@@ -190,23 +240,9 @@ extern "C" {
 #include <immintrin.h>  // AVX, AVX2, FMA, POPCNT
 #include <nmmintrin.h>  // SSE4.2
 #include <wmmintrin.h>  // AES, PCLMUL
-#define WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64_V3
 
-#else  // defined(__AVX2__) || defined(__clang__)
-
-// clang-cl (which defines both __clang__ and _MSC_VER) supports
-// "__attribute__((target(arg)))".
-//
-// For MSVC's cl.exe (unlike clang or gcc), SIMD capability is a compile-time
-// property of the source file (e.g. a /arch:AVX2 or -mavx2 compiler flag), not
-// of individual functions (that can be conditionally selected at runtime).
-#if !defined(WUFFS_CONFIG__I_KNOW_THAT_WUFFS_MSVC_PERFORMS_BEST_WITH_ARCH_AVX2)
-#pragma message("Wuffs with MSVC+IX86/X64 performs best with /arch:AVX2")
-#endif
-
-#endif  // defined(__AVX2__) || defined(__clang__)
+#endif  // defined(WUFFS_PRIVATE_IMPL__CPU_ARCH__X86_64)
 #endif  // defined(_M_X64)
-
 #endif  // (#if-chain ref AVOID_CPU_ARCH_1)
 #endif  // (#if-chain ref AVOID_CPU_ARCH_0)
 
@@ -912,6 +948,8 @@ typedef struct wuffs_base__transform__output__struct {
 // Quirks.
 
 #define WUFFS_BASE__QUIRK_IGNORE_CHECKSUM 1
+
+#define WUFFS_BASE__QUIRK_QUALITY 2
 
 // --------
 
@@ -1977,6 +2015,20 @@ wuffs_base__table__flattened_length(size_t width,
 WUFFS_BASE__MAYBE_STATIC int32_t  //
 wuffs_base__magic_number_guess_fourcc(wuffs_base__slice_u8 prefix_data,
                                       bool prefix_closed);
+
+// ---------------- Quirk Values
+
+// These constants are the value half of a key-value pair, where the key is
+// WUFFS_BASE__QUIRK_QUALITY.
+//
+// In the Wuffs API, set_quirk takes a u64 value. These macro definitions are
+// likewise unsigned values (uint64_t) but for this particular key, they are
+// best interpreted as signed values (int64_t). "Lower-than-default quality"
+// and "higher-than-default quality", as signed values, are -1 and +1.
+//
+// See doc/note/quirks.md for some more discussion about trade-offs.
+#define WUFFS_BASE__QUIRK_QUALITY__VALUE__LOWER_QUALITY UINT64_MAX
+#define WUFFS_BASE__QUIRK_QUALITY__VALUE__HIGHER_QUALITY ((uint64_t)1)
 
 // ---------------- Ranges and Rects
 
@@ -3350,49 +3402,53 @@ wuffs_base__make_token(uint64_t repr) {
 
 // --------
 
-#define WUFFS_BASE__TOKEN__LENGTH__MAX_INCL 0xFFFF
-
-#define WUFFS_BASE__TOKEN__VALUE__SHIFT 17
-#define WUFFS_BASE__TOKEN__VALUE_EXTENSION__SHIFT 17
-#define WUFFS_BASE__TOKEN__VALUE_MAJOR__SHIFT 42
-#define WUFFS_BASE__TOKEN__VALUE_MINOR__SHIFT 17
-#define WUFFS_BASE__TOKEN__VALUE_BASE_CATEGORY__SHIFT 38
-#define WUFFS_BASE__TOKEN__VALUE_BASE_DETAIL__SHIFT 17
-#define WUFFS_BASE__TOKEN__CONTINUED__SHIFT 16
-#define WUFFS_BASE__TOKEN__LENGTH__SHIFT 0
-
-#define WUFFS_BASE__TOKEN__VALUE_EXTENSION__NUM_BITS 46
+// clang-format off
 
 // --------
 
-#define WUFFS_BASE__TOKEN__VBC__FILLER 0
-#define WUFFS_BASE__TOKEN__VBC__STRUCTURE 1
-#define WUFFS_BASE__TOKEN__VBC__STRING 2
-#define WUFFS_BASE__TOKEN__VBC__UNICODE_CODE_POINT 3
-#define WUFFS_BASE__TOKEN__VBC__LITERAL 4
-#define WUFFS_BASE__TOKEN__VBC__NUMBER 5
-#define WUFFS_BASE__TOKEN__VBC__INLINE_INTEGER_SIGNED 6
+#define WUFFS_BASE__TOKEN__LENGTH__MAX_INCL 0xFFFF
+
+#define WUFFS_BASE__TOKEN__VALUE__SHIFT               17
+#define WUFFS_BASE__TOKEN__VALUE_EXTENSION__SHIFT     17
+#define WUFFS_BASE__TOKEN__VALUE_MAJOR__SHIFT         42
+#define WUFFS_BASE__TOKEN__VALUE_MINOR__SHIFT         17
+#define WUFFS_BASE__TOKEN__VALUE_BASE_CATEGORY__SHIFT 38
+#define WUFFS_BASE__TOKEN__VALUE_BASE_DETAIL__SHIFT   17
+#define WUFFS_BASE__TOKEN__CONTINUED__SHIFT           16
+#define WUFFS_BASE__TOKEN__LENGTH__SHIFT               0
+
+#define WUFFS_BASE__TOKEN__VALUE_EXTENSION__NUM_BITS  46
+
+// --------
+
+#define WUFFS_BASE__TOKEN__VBC__FILLER                  0
+#define WUFFS_BASE__TOKEN__VBC__STRUCTURE               1
+#define WUFFS_BASE__TOKEN__VBC__STRING                  2
+#define WUFFS_BASE__TOKEN__VBC__UNICODE_CODE_POINT      3
+#define WUFFS_BASE__TOKEN__VBC__LITERAL                 4
+#define WUFFS_BASE__TOKEN__VBC__NUMBER                  5
+#define WUFFS_BASE__TOKEN__VBC__INLINE_INTEGER_SIGNED   6
 #define WUFFS_BASE__TOKEN__VBC__INLINE_INTEGER_UNSIGNED 7
 
 // --------
 
-#define WUFFS_BASE__TOKEN__VBD__FILLER__PUNCTUATION 0x00001
+#define WUFFS_BASE__TOKEN__VBD__FILLER__PUNCTUATION   0x00001
 #define WUFFS_BASE__TOKEN__VBD__FILLER__COMMENT_BLOCK 0x00002
-#define WUFFS_BASE__TOKEN__VBD__FILLER__COMMENT_LINE 0x00004
+#define WUFFS_BASE__TOKEN__VBD__FILLER__COMMENT_LINE  0x00004
 
 // COMMENT_ANY is a bit-wise or of COMMENT_BLOCK AND COMMENT_LINE.
-#define WUFFS_BASE__TOKEN__VBD__FILLER__COMMENT_ANY 0x00006
+#define WUFFS_BASE__TOKEN__VBD__FILLER__COMMENT_ANY   0x00006
 
 // --------
 
-#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__PUSH 0x00001
-#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__POP 0x00002
+#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__PUSH      0x00001
+#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__POP       0x00002
 #define WUFFS_BASE__TOKEN__VBD__STRUCTURE__FROM_NONE 0x00010
 #define WUFFS_BASE__TOKEN__VBD__STRUCTURE__FROM_LIST 0x00020
 #define WUFFS_BASE__TOKEN__VBD__STRUCTURE__FROM_DICT 0x00040
-#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_NONE 0x01000
-#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_LIST 0x02000
-#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_DICT 0x04000
+#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_NONE   0x01000
+#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_LIST   0x02000
+#define WUFFS_BASE__TOKEN__VBD__STRUCTURE__TO_DICT   0x04000
 
 // --------
 
@@ -3412,11 +3468,11 @@ wuffs_base__make_token(uint64_t repr) {
 //
 // The lack of any particular bit is conservative: it is valid for all-ASCII
 // strings, in a single- or multi-token chain, to have none of these bits set.
-#define WUFFS_BASE__TOKEN__VBD__STRING__DEFINITELY_UTF_8 0x00001
-#define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_MUST_BE_UTF_8 0x00002
+#define WUFFS_BASE__TOKEN__VBD__STRING__DEFINITELY_UTF_8      0x00001
+#define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_MUST_BE_UTF_8   0x00002
 #define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_SHOULD_BE_UTF_8 0x00004
-#define WUFFS_BASE__TOKEN__VBD__STRING__DEFINITELY_ASCII 0x00010
-#define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_MUST_BE_ASCII 0x00020
+#define WUFFS_BASE__TOKEN__VBD__STRING__DEFINITELY_ASCII      0x00010
+#define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_MUST_BE_ASCII   0x00020
 #define WUFFS_BASE__TOKEN__VBD__STRING__CHAIN_SHOULD_BE_ASCII 0x00040
 
 // CONVERT_D_DST_S_SRC means that multiples of S source bytes (possibly padded)
@@ -3431,22 +3487,22 @@ wuffs_base__make_token(uint64_t repr) {
 // When src is the empty string, multiple conversion algorithms are applicable
 // (so these bits are not necessarily mutually exclusive), all producing the
 // same empty dst string.
-#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_0_DST_1_SRC_DROP 0x00100
-#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_1_DST_1_SRC_COPY 0x00200
+#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_0_DST_1_SRC_DROP        0x00100
+#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_1_DST_1_SRC_COPY        0x00200
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_1_DST_2_SRC_HEXADECIMAL 0x00400
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_1_DST_4_SRC_BACKSLASH_X 0x00800
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_3_DST_4_SRC_BASE_64_STD 0x01000
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_3_DST_4_SRC_BASE_64_URL 0x02000
-#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_4_DST_5_SRC_ASCII_85 0x04000
+#define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_4_DST_5_SRC_ASCII_85    0x04000
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_HEX 0x08000
 #define WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_STD 0x10000
 
 // --------
 
 #define WUFFS_BASE__TOKEN__VBD__LITERAL__UNDEFINED 0x00001
-#define WUFFS_BASE__TOKEN__VBD__LITERAL__NULL 0x00002
-#define WUFFS_BASE__TOKEN__VBD__LITERAL__FALSE 0x00004
-#define WUFFS_BASE__TOKEN__VBD__LITERAL__TRUE 0x00008
+#define WUFFS_BASE__TOKEN__VBD__LITERAL__NULL      0x00002
+#define WUFFS_BASE__TOKEN__VBD__LITERAL__FALSE     0x00004
+#define WUFFS_BASE__TOKEN__VBD__LITERAL__TRUE      0x00008
 
 // --------
 
@@ -3459,8 +3515,8 @@ wuffs_base__make_token(uint64_t repr) {
 // For a source string of "+123" or "-0x9A", only the first two are valid.
 //
 // For a source string of "123.", only the first one is valid.
-#define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_FLOATING_POINT 0x00001
-#define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_INTEGER_SIGNED 0x00002
+#define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_FLOATING_POINT   0x00001
+#define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_INTEGER_SIGNED   0x00002
 #define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_INTEGER_UNSIGNED 0x00004
 
 #define WUFFS_BASE__TOKEN__VBD__NUMBER__CONTENT_NEG_INF 0x00010
@@ -3472,11 +3528,15 @@ wuffs_base__make_token(uint64_t repr) {
 // "300", which are big-endian, little-endian or text. For binary formats, the
 // token length (after adjusting for FORMAT_IGNORE_ETC) discriminates
 // e.g. u16 little-endian vs u32 little-endian.
-#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_BINARY_BIG_ENDIAN 0x00100
+#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_BINARY_BIG_ENDIAN    0x00100
 #define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_BINARY_LITTLE_ENDIAN 0x00200
-#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_TEXT 0x00400
+#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_TEXT                 0x00400
 
-#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_IGNORE_FIRST_BYTE 0x01000
+#define WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_IGNORE_FIRST_BYTE    0x01000
+
+// --------
+
+// clang-format on
 
 // --------
 
@@ -9601,6 +9661,7 @@ extern const char wuffs_jpeg__error__bad_sof_marker[];
 extern const char wuffs_jpeg__error__bad_sos_marker[];
 extern const char wuffs_jpeg__error__bad_header[];
 extern const char wuffs_jpeg__error__bad_marker[];
+extern const char wuffs_jpeg__error__bad_scan_count[];
 extern const char wuffs_jpeg__error__missing_huffman_table[];
 extern const char wuffs_jpeg__error__missing_quantization_table[];
 extern const char wuffs_jpeg__error__truncated_input[];
@@ -9845,6 +9906,12 @@ struct wuffs_jpeg__decoder__struct {
     uint32_t f_bitstream_ri;
     uint32_t f_bitstream_wi;
     bool f_bitstream_is_closed;
+    bool f_expect_multiple_scans;
+    bool f_use_lower_quality;
+    bool f_swizzle_immediately;
+    wuffs_base__status f_swizzle_immediately_status;
+    uint32_t f_swizzle_immediately_b_offsets[10];
+    uint32_t f_swizzle_immediately_c_offsets[5];
     uint32_t f_bitstream_padding;
     uint16_t f_quant_tables[4][64];
     uint16_t f_saved_quant_tables[4][64];
@@ -9880,6 +9947,7 @@ struct wuffs_jpeg__decoder__struct {
     uint32_t p_skip_past_the_next_restart_marker;
     uint32_t (*choosy_decode_mcu)(
         wuffs_jpeg__decoder* self,
+        wuffs_base__pixel_buffer* a_dst,
         wuffs_base__slice_u8 a_workbuf,
         uint32_t a_mx,
         uint32_t a_my);
@@ -9888,6 +9956,7 @@ struct wuffs_jpeg__decoder__struct {
   struct {
     uint8_t f_bitstream_buffer[2048];
     uint16_t f_mcu_blocks[10][64];
+    uint8_t f_swizzle_immediately_buffer[640];
     uint8_t f_swizzle_ycck_scratch_buffer_2k[2048];
     uint8_t f_dht_temp_counts[16];
     uint8_t f_dht_temp_bit_lengths[256];
@@ -14992,6 +15061,7 @@ struct wuffs_xz__decoder__struct {
 #include <stdio.h>
 
 #include <string>
+#include <utility>
 
 namespace wuffs_aux {
 
@@ -15003,6 +15073,8 @@ using IOBuffer = wuffs_base__io_buffer;
 // MemOwner(nullptr, &free), even if that statically allocated memory is not
 // nullptr, since calling free(nullptr) is a no-op.
 using MemOwner = std::unique_ptr<void, decltype(&free)>;
+
+using QuirkKeyValuePair = std::pair<uint32_t, uint64_t>;
 
 namespace sync_io {
 
@@ -15186,13 +15258,14 @@ class DecodeCborCallbacks {
 
 // DecodeCborArgQuirks wraps an optional argument to DecodeCbor.
 struct DecodeCborArgQuirks {
-  explicit DecodeCborArgQuirks(wuffs_base__slice_u32 repr0);
-  explicit DecodeCborArgQuirks(uint32_t* ptr, size_t len);
+  explicit DecodeCborArgQuirks(const QuirkKeyValuePair* ptr0,
+                               const size_t len0);
 
   // DefaultValue returns an empty slice.
   static DecodeCborArgQuirks DefaultValue();
 
-  wuffs_base__slice_u32 repr;
+  const QuirkKeyValuePair* ptr;
+  const size_t len;
 };
 
 // DecodeCbor calls callbacks based on the CBOR-formatted data in input.
@@ -15400,13 +15473,14 @@ extern const char DecodeImage_UnsupportedPixelFormat[];
 
 // DecodeImageArgQuirks wraps an optional argument to DecodeImage.
 struct DecodeImageArgQuirks {
-  explicit DecodeImageArgQuirks(wuffs_base__slice_u32 repr0);
-  explicit DecodeImageArgQuirks(uint32_t* ptr, size_t len);
+  explicit DecodeImageArgQuirks(const QuirkKeyValuePair* ptr0,
+                                const size_t len0);
 
   // DefaultValue returns an empty slice.
   static DecodeImageArgQuirks DefaultValue();
 
-  wuffs_base__slice_u32 repr;
+  const QuirkKeyValuePair* ptr;
+  const size_t len;
 };
 
 // DecodeImageArgFlags wraps an optional argument to DecodeImage.
@@ -15618,13 +15692,14 @@ extern const char DecodeJson_NoMatch[];
 
 // DecodeJsonArgQuirks wraps an optional argument to DecodeJson.
 struct DecodeJsonArgQuirks {
-  explicit DecodeJsonArgQuirks(wuffs_base__slice_u32 repr0);
-  explicit DecodeJsonArgQuirks(uint32_t* ptr, size_t len);
+  explicit DecodeJsonArgQuirks(const QuirkKeyValuePair* ptr0,
+                               const size_t len0);
 
   // DefaultValue returns an empty slice.
   static DecodeJsonArgQuirks DefaultValue();
 
-  wuffs_base__slice_u32 repr;
+  const QuirkKeyValuePair* ptr;
+  const size_t len;
 };
 
 // DecodeJsonArgJsonPointer wraps an optional argument to DecodeJson.
@@ -16546,8 +16621,10 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
     const wuffs_base__pixel_swizzler* p,
     wuffs_base__pixel_buffer* dst,
     wuffs_base__slice_u8 dst_palette,
-    uint32_t width,
-    uint32_t height,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
     wuffs_base__slice_u8 src0,
     wuffs_base__slice_u8 src1,
     wuffs_base__slice_u8 src2,
@@ -28482,8 +28559,10 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter_edge_row(
 static void  //
 wuffs_private_impl__swizzle_ycck__general__triangle_filter(
     wuffs_base__pixel_buffer* dst,
-    uint32_t width,
-    uint32_t height,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
     const uint8_t* src_ptr0,
     const uint8_t* src_ptr1,
     const uint8_t* src_ptr2,
@@ -28505,6 +28584,10 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter(
     uint8_t* scratch_buffer_2k_ptr,
     wuffs_private_impl__swizzle_ycc__upsample_func (*upfuncs)[4][4],
     wuffs_private_impl__swizzle_ycc__convert_4_func conv4func) {
+  if ((x_min_incl != 0) || (y_min_incl != 0)) {
+    return;
+  }
+
   wuffs_private_impl__swizzle_ycc__upsample_func upfunc0 =
       (*upfuncs)[(inv_h0 - 1u) & 3u][(inv_v0 - 1u) & 3u];
   wuffs_private_impl__swizzle_ycc__upsample_func upfunc1 =
@@ -28517,7 +28600,7 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter(
   // First row.
   uint32_t h1v2_bias = 1u;
   wuffs_private_impl__swizzle_ycck__general__triangle_filter_edge_row(
-      dst, width, 0u,                          //
+      dst, x_max_excl, 0u,                     //
       src_ptr0, src_ptr1, src_ptr2, src_ptr3,  //
       stride0, stride1, stride2, stride3,      //
       inv_h0, inv_h1, inv_h2, inv_h3,          //
@@ -28529,10 +28612,10 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter(
   h1v2_bias = 2u;
 
   // Middle rows.
-  bool last_row = height == 2u * half_height_for_2to1;
-  uint32_t y_max_excl = last_row ? (height - 1u) : height;
+  bool last_row = y_max_excl == 2u * half_height_for_2to1;
+  uint32_t middle_y_max_excl = last_row ? (y_max_excl - 1u) : y_max_excl;
   uint32_t y;
-  for (y = 1u; y < y_max_excl; y++) {
+  for (y = 1u; y < middle_y_max_excl; y++) {
     const uint8_t* src0_major = src_ptr0 + ((y / inv_v0) * (size_t)stride0);
     const uint8_t* src0_minor =
         (inv_v0 != 2u)
@@ -28559,11 +28642,11 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter(
     uint32_t total_src_len3 = 0u;
 
     uint32_t x = 0u;
-    while (x < width) {
+    while (x < x_max_excl) {
       bool first_column = x == 0u;
       uint32_t end = x + 480u;
-      if (end > width) {
-        end = width;
+      if (end > x_max_excl) {
+        end = x_max_excl;
       }
 
       uint32_t src_len0 = ((end - x) + inv_h0 - 1u) / inv_h0;
@@ -28619,9 +28702,9 @@ wuffs_private_impl__swizzle_ycck__general__triangle_filter(
   }
 
   // Last row.
-  if (y_max_excl != height) {
+  if (middle_y_max_excl != y_max_excl) {
     wuffs_private_impl__swizzle_ycck__general__triangle_filter_edge_row(
-        dst, width, height - 1u,                 //
+        dst, x_max_excl, middle_y_max_excl,      //
         src_ptr0, src_ptr1, src_ptr2, src_ptr3,  //
         stride0, stride1, stride2, stride3,      //
         inv_h0, inv_h1, inv_h2, inv_h3,          //
@@ -28717,8 +28800,10 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter_edge_row(
 static void  //
 wuffs_private_impl__swizzle_ycc__general__triangle_filter(
     wuffs_base__pixel_buffer* dst,
-    uint32_t width,
-    uint32_t height,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
     const uint8_t* src_ptr0,
     const uint8_t* src_ptr1,
     const uint8_t* src_ptr2,
@@ -28736,6 +28821,10 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
     uint8_t* scratch_buffer_2k_ptr,
     wuffs_private_impl__swizzle_ycc__upsample_func (*upfuncs)[4][4],
     wuffs_private_impl__swizzle_ycc__convert_3_func conv3func) {
+  if ((x_min_incl != 0) || (y_min_incl != 0)) {
+    return;
+  }
+
   wuffs_private_impl__swizzle_ycc__upsample_func upfunc0 =
       (*upfuncs)[(inv_h0 - 1u) & 3u][(inv_v0 - 1u) & 3u];
   wuffs_private_impl__swizzle_ycc__upsample_func upfunc1 =
@@ -28746,7 +28835,7 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
   // First row.
   uint32_t h1v2_bias = 1u;
   wuffs_private_impl__swizzle_ycc__general__triangle_filter_edge_row(
-      dst, width, 0u,                //
+      dst, x_max_excl, 0u,           //
       src_ptr0, src_ptr1, src_ptr2,  //
       stride0, stride1, stride2,     //
       inv_h0, inv_h1, inv_h2,        //
@@ -28758,10 +28847,10 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
   h1v2_bias = 2u;
 
   // Middle rows.
-  bool last_row = height == 2u * half_height_for_2to1;
-  uint32_t y_max_excl = last_row ? (height - 1u) : height;
+  bool last_row = y_max_excl == 2u * half_height_for_2to1;
+  uint32_t middle_y_max_excl = last_row ? (y_max_excl - 1u) : y_max_excl;
   uint32_t y;
-  for (y = 1u; y < y_max_excl; y++) {
+  for (y = 1u; y < middle_y_max_excl; y++) {
     const uint8_t* src0_major = src_ptr0 + ((y / inv_v0) * (size_t)stride0);
     const uint8_t* src0_minor =
         (inv_v0 != 2u)
@@ -28782,11 +28871,11 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
     uint32_t total_src_len2 = 0u;
 
     uint32_t x = 0u;
-    while (x < width) {
+    while (x < x_max_excl) {
       bool first_column = x == 0u;
       uint32_t end = x + 672u;
-      if (end > width) {
-        end = width;
+      if (end > x_max_excl) {
+        end = x_max_excl;
       }
 
       uint32_t src_len0 = ((end - x) + inv_h0 - 1u) / inv_h0;
@@ -28831,16 +28920,16 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
   }
 
   // Last row.
-  if (y_max_excl != height) {
+  if (middle_y_max_excl != y_max_excl) {
     wuffs_private_impl__swizzle_ycc__general__triangle_filter_edge_row(
-        dst, width, height - 1u,       //
-        src_ptr0, src_ptr1, src_ptr2,  //
-        stride0, stride1, stride2,     //
-        inv_h0, inv_h1, inv_h2,        //
-        inv_v0, inv_v1, inv_v2,        //
-        half_width_for_2to1,           //
-        h1v2_bias,                     //
-        scratch_buffer_2k_ptr,         //
+        dst, x_max_excl, middle_y_max_excl,  //
+        src_ptr0, src_ptr1, src_ptr2,        //
+        stride0, stride1, stride2,           //
+        inv_h0, inv_h1, inv_h2,              //
+        inv_v0, inv_v1, inv_v2,              //
+        half_width_for_2to1,                 //
+        h1v2_bias,                           //
+        scratch_buffer_2k_ptr,               //
         upfunc0, upfunc1, upfunc2, conv3func);
   }
 }
@@ -28848,8 +28937,10 @@ wuffs_private_impl__swizzle_ycc__general__triangle_filter(
 static void  //
 wuffs_private_impl__swizzle_ycc__general__box_filter(
     wuffs_base__pixel_buffer* dst,
-    uint32_t width,
-    uint32_t height,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
     const uint8_t* src_ptr0,
     const uint8_t* src_ptr1,
     const uint8_t* src_ptr2,
@@ -28875,44 +28966,141 @@ wuffs_private_impl__swizzle_ycc__general__box_filter(
       (*upfuncs)[(inv_h2 - 1u) & 3u][(inv_v2 - 1u) & 3u];
 
   uint32_t y;
-  for (y = 0u; y < height; y++) {
-    const uint8_t* src0_major = src_ptr0 + ((y / inv_v0) * (size_t)stride0);
-    const uint8_t* src1_major = src_ptr1 + ((y / inv_v1) * (size_t)stride1);
-    const uint8_t* src2_major = src_ptr2 + ((y / inv_v2) * (size_t)stride2);
+  for (y = y_min_incl; y < y_max_excl; y++) {
+    const uint8_t* src0_major =
+        src_ptr0 + (((y - y_min_incl) / inv_v0) * (size_t)stride0);
+    const uint8_t* src1_major =
+        src_ptr1 + (((y - y_min_incl) / inv_v1) * (size_t)stride1);
+    const uint8_t* src2_major =
+        src_ptr2 + (((y - y_min_incl) / inv_v2) * (size_t)stride2);
 
-    uint32_t x = 0u;
-    while (x < width) {
+    uint32_t x = x_min_incl;
+    while (x < x_max_excl) {
       uint32_t end = x + 672u;
-      if (end > width) {
-        end = width;
+      if (end > x_max_excl) {
+        end = x_max_excl;
       }
 
       uint32_t src_len0 = ((end - x) + inv_h0 - 1u) / inv_h0;
       uint32_t src_len1 = ((end - x) + inv_h1 - 1u) / inv_h1;
       uint32_t src_len2 = ((end - x) + inv_h2 - 1u) / inv_h2;
 
-      const uint8_t* up0 = (*upfunc0)(          //
-          scratch_buffer_2k_ptr + (0u * 672u),  //
-          src0_major + (x / inv_h0),            //
-          src0_major + (x / inv_h0),            //
-          src_len0,                             //
+      const uint8_t* up0 = (*upfunc0)(               //
+          scratch_buffer_2k_ptr + (0u * 672u),       //
+          src0_major + ((x - x_min_incl) / inv_h0),  //
+          src0_major + ((x - x_min_incl) / inv_h0),  //
+          src_len0,                                  //
           0u, false, false);
 
-      const uint8_t* up1 = (*upfunc1)(          //
-          scratch_buffer_2k_ptr + (1u * 672u),  //
-          src1_major + (x / inv_h1),            //
-          src1_major + (x / inv_h1),            //
-          src_len1,                             //
+      const uint8_t* up1 = (*upfunc1)(               //
+          scratch_buffer_2k_ptr + (1u * 672u),       //
+          src1_major + ((x - x_min_incl) / inv_h1),  //
+          src1_major + ((x - x_min_incl) / inv_h1),  //
+          src_len1,                                  //
           0u, false, false);
 
-      const uint8_t* up2 = (*upfunc2)(          //
-          scratch_buffer_2k_ptr + (2u * 672u),  //
-          src2_major + (x / inv_h2),            //
-          src2_major + (x / inv_h2),            //
-          src_len2,                             //
+      const uint8_t* up2 = (*upfunc2)(               //
+          scratch_buffer_2k_ptr + (2u * 672u),       //
+          src2_major + ((x - x_min_incl) / inv_h2),  //
+          src2_major + ((x - x_min_incl) / inv_h2),  //
+          src_len2,                                  //
           0u, false, false);
 
       (*conv3func)(dst, x, end, y, up0, up1, up2);
+      x = end;
+    }
+  }
+}
+
+static void  //
+wuffs_private_impl__swizzle_ycck__general__box_filter(
+    wuffs_base__pixel_buffer* dst,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
+    const uint8_t* src_ptr0,
+    const uint8_t* src_ptr1,
+    const uint8_t* src_ptr2,
+    const uint8_t* src_ptr3,
+    uint32_t stride0,
+    uint32_t stride1,
+    uint32_t stride2,
+    uint32_t stride3,
+    uint32_t inv_h0,
+    uint32_t inv_h1,
+    uint32_t inv_h2,
+    uint32_t inv_h3,
+    uint32_t inv_v0,
+    uint32_t inv_v1,
+    uint32_t inv_v2,
+    uint32_t inv_v3,
+    uint32_t half_width_for_2to1,
+    uint32_t half_height_for_2to1,
+    uint8_t* scratch_buffer_2k_ptr,
+    wuffs_private_impl__swizzle_ycc__upsample_func (*upfuncs)[4][4],
+    wuffs_private_impl__swizzle_ycc__convert_4_func conv4func) {
+  wuffs_private_impl__swizzle_ycc__upsample_func upfunc0 =
+      (*upfuncs)[(inv_h0 - 1u) & 3u][(inv_v0 - 1u) & 3u];
+  wuffs_private_impl__swizzle_ycc__upsample_func upfunc1 =
+      (*upfuncs)[(inv_h1 - 1u) & 3u][(inv_v1 - 1u) & 3u];
+  wuffs_private_impl__swizzle_ycc__upsample_func upfunc2 =
+      (*upfuncs)[(inv_h2 - 1u) & 3u][(inv_v2 - 1u) & 3u];
+  wuffs_private_impl__swizzle_ycc__upsample_func upfunc3 =
+      (*upfuncs)[(inv_h3 - 1u) & 3u][(inv_v3 - 1u) & 3u];
+
+  uint32_t y;
+  for (y = y_min_incl; y < y_max_excl; y++) {
+    const uint8_t* src0_major =
+        src_ptr0 + (((y - y_min_incl) / inv_v0) * (size_t)stride0);
+    const uint8_t* src1_major =
+        src_ptr1 + (((y - y_min_incl) / inv_v1) * (size_t)stride1);
+    const uint8_t* src2_major =
+        src_ptr2 + (((y - y_min_incl) / inv_v2) * (size_t)stride2);
+    const uint8_t* src3_major =
+        src_ptr3 + (((y - y_min_incl) / inv_v3) * (size_t)stride3);
+
+    uint32_t x = x_min_incl;
+    while (x < x_max_excl) {
+      uint32_t end = x + 480u;
+      if (end > x_max_excl) {
+        end = x_max_excl;
+      }
+
+      uint32_t src_len0 = ((end - x) + inv_h0 - 1u) / inv_h0;
+      uint32_t src_len1 = ((end - x) + inv_h1 - 1u) / inv_h1;
+      uint32_t src_len2 = ((end - x) + inv_h2 - 1u) / inv_h2;
+      uint32_t src_len3 = ((end - x) + inv_h3 - 1u) / inv_h3;
+
+      const uint8_t* up0 = (*upfunc0)(               //
+          scratch_buffer_2k_ptr + (0u * 480u),       //
+          src0_major + ((x - x_min_incl) / inv_h0),  //
+          src0_major + ((x - x_min_incl) / inv_h0),  //
+          src_len0,                                  //
+          0u, false, false);
+
+      const uint8_t* up1 = (*upfunc1)(               //
+          scratch_buffer_2k_ptr + (1u * 480u),       //
+          src1_major + ((x - x_min_incl) / inv_h1),  //
+          src1_major + ((x - x_min_incl) / inv_h1),  //
+          src_len1,                                  //
+          0u, false, false);
+
+      const uint8_t* up2 = (*upfunc2)(               //
+          scratch_buffer_2k_ptr + (2u * 480u),       //
+          src2_major + ((x - x_min_incl) / inv_h2),  //
+          src2_major + ((x - x_min_incl) / inv_h2),  //
+          src_len2,                                  //
+          0u, false, false);
+
+      const uint8_t* up3 = (*upfunc3)(               //
+          scratch_buffer_2k_ptr + (3u * 480u),       //
+          src3_major + ((x - x_min_incl) / inv_h3),  //
+          src3_major + ((x - x_min_incl) / inv_h3),  //
+          src_len3,                                  //
+          0u, false, false);
+
+      (*conv4func)(dst, x, end, y, up0, up1, up2, up3);
       x = end;
     }
   }
@@ -28942,8 +29130,10 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
     const wuffs_base__pixel_swizzler* p,
     wuffs_base__pixel_buffer* dst,
     wuffs_base__slice_u8 dst_palette,
-    uint32_t width,
-    uint32_t height,
+    uint32_t x_min_incl,
+    uint32_t x_max_excl,
+    uint32_t y_min_incl,
+    uint32_t y_max_excl,
     wuffs_base__slice_u8 src0,
     wuffs_base__slice_u8 src1,
     wuffs_base__slice_u8 src2,
@@ -28973,13 +29163,18 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
     wuffs_base__slice_u8 scratch_buffer_2k) {
   if (!p) {
     return wuffs_base__make_status(wuffs_base__error__bad_receiver);
-  } else if (!dst || (width > 0xFFFFu) || (height > 0xFFFFu) ||  //
-             (4u <= ((unsigned int)h0 - 1u)) ||                  //
-             (4u <= ((unsigned int)h1 - 1u)) ||                  //
-             (4u <= ((unsigned int)h2 - 1u)) ||                  //
-             (4u <= ((unsigned int)v0 - 1u)) ||                  //
-             (4u <= ((unsigned int)v1 - 1u)) ||                  //
-             (4u <= ((unsigned int)v2 - 1u)) ||                  //
+  } else if (!dst ||                             //
+             (x_min_incl > x_max_excl) ||        //
+             (x_max_excl > 0xFFFFu) ||           //
+             (y_min_incl > y_max_excl) ||        //
+             (y_max_excl > 0xFFFFu) ||           //
+             (4u <= ((unsigned int)h0 - 1u)) ||  //
+             (4u <= ((unsigned int)h1 - 1u)) ||  //
+             (4u <= ((unsigned int)h2 - 1u)) ||  //
+             (4u <= ((unsigned int)v0 - 1u)) ||  //
+             (4u <= ((unsigned int)v1 - 1u)) ||  //
+             (4u <= ((unsigned int)v2 - 1u)) ||  //
+             (triangle_filter_for_2to1 && ((x_min_incl | y_min_incl) > 0u)) ||
              (scratch_buffer_2k.len < 2048u)) {
     return wuffs_base__make_status(wuffs_base__error__bad_argument);
   }
@@ -29006,21 +29201,69 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   uint32_t inv_v2 = max_incl_v / v2;
   uint32_t inv_v3 = v3 ? (max_incl_v / v3) : 0u;
 
-  uint32_t half_width_for_2to1 = (width + 1u) / 2u;
-  uint32_t half_height_for_2to1 = (height + 1u) / 2u;
+  if (x_min_incl != 0) {
+    if ((x_min_incl % inv_h0) || (x_min_incl % inv_h1) ||
+        (x_min_incl % inv_h2) || (inv_h3 && (x_min_incl % inv_h3))) {
+      return wuffs_base__make_status(wuffs_base__error__bad_argument);
+    }
+  }
+  if (y_min_incl != 0) {
+    if ((y_min_incl % inv_v0) || (y_min_incl % inv_v1) ||
+        (y_min_incl % inv_v2) || (inv_v3 && (y_min_incl % inv_v3))) {
+      return wuffs_base__make_status(wuffs_base__error__bad_argument);
+    }
+  }
 
-  width = wuffs_private_impl__u32__min_of_5(  //
-      width,                                  //
-      width0 * inv_h0,                        //
-      width1 * inv_h1,                        //
-      width2 * inv_h2,                        //
-      wuffs_base__pixel_config__width(&dst->pixcfg));
-  height = wuffs_private_impl__u32__min_of_5(  //
-      height,                                  //
-      height0 * inv_v0,                        //
-      height1 * inv_v1,                        //
-      height2 * inv_v2,                        //
-      wuffs_base__pixel_config__height(&dst->pixcfg));
+  uint32_t half_width_for_2to1 = ((x_max_excl - x_min_incl) + 1u) / 2u;
+  if (inv_h0 == 2) {
+    half_width_for_2to1 = wuffs_base__u32__min(half_width_for_2to1, width0);
+  }
+  if (inv_h1 == 2) {
+    half_width_for_2to1 = wuffs_base__u32__min(half_width_for_2to1, width1);
+  }
+  if (inv_h2 == 2) {
+    half_width_for_2to1 = wuffs_base__u32__min(half_width_for_2to1, width2);
+  }
+  if (inv_h3 == 2) {
+    half_width_for_2to1 = wuffs_base__u32__min(half_width_for_2to1, width3);
+  }
+
+  uint32_t half_height_for_2to1 = ((y_max_excl - y_min_incl) + 1u) / 2u;
+  if (inv_v0 == 2) {
+    half_height_for_2to1 = wuffs_base__u32__min(half_height_for_2to1, height0);
+  }
+  if (inv_v1 == 2) {
+    half_height_for_2to1 = wuffs_base__u32__min(half_height_for_2to1, height1);
+  }
+  if (inv_v2 == 2) {
+    half_height_for_2to1 = wuffs_base__u32__min(half_height_for_2to1, height2);
+  }
+  if (inv_v3 == 2) {
+    half_height_for_2to1 = wuffs_base__u32__min(half_height_for_2to1, height3);
+  }
+
+  x_max_excl = wuffs_base__u32__min(                   //
+      wuffs_base__pixel_config__width(&dst->pixcfg),   //
+      x_min_incl + wuffs_private_impl__u32__min_of_5(  //
+                       x_max_excl - x_min_incl,        //
+                       width0 * inv_h0,                //
+                       width1 * inv_h1,                //
+                       width2 * inv_h2,                //
+                       inv_h3 ? (width3 * inv_h3) : 0xFFFFFFFF));
+  y_max_excl = wuffs_base__u32__min(                   //
+      wuffs_base__pixel_config__height(&dst->pixcfg),  //
+      y_min_incl + wuffs_private_impl__u32__min_of_5(  //
+                       y_max_excl - y_min_incl,        //
+                       height0 * inv_v0,               //
+                       height1 * inv_v1,               //
+                       height2 * inv_v2,               //
+                       inv_v3 ? (height3 * inv_v3) : 0xFFFFFFFF));
+
+  if ((x_min_incl >= x_max_excl) || (y_min_incl >= y_max_excl)) {
+    return wuffs_base__make_status(NULL);
+  }
+  uint32_t width = x_max_excl - x_min_incl;
+  uint32_t height = y_max_excl - y_min_incl;
 
   if (((h0 * inv_h0) != max_incl_h) ||  //
       ((h1 * inv_h1) != max_incl_h) ||  //
@@ -29121,10 +29364,6 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
 
   // ----
 
-  if ((width <= 0u) || (height <= 0u)) {
-    return wuffs_base__make_status(NULL);
-  }
-
   wuffs_private_impl__swizzle_ycc__convert_3_func conv3func = NULL;
 
   if (is_rgb_or_cmyk) {
@@ -29159,27 +29398,57 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
     }
   }
 
-  void (*func)(wuffs_base__pixel_buffer * dst,  //
-               uint32_t width,                  //
-               uint32_t height,                 //
-               const uint8_t* src_ptr0,         //
-               const uint8_t* src_ptr1,         //
-               const uint8_t* src_ptr2,         //
-               uint32_t stride0,                //
-               uint32_t stride1,                //
-               uint32_t stride2,                //
-               uint32_t inv_h0,                 //
-               uint32_t inv_h1,                 //
-               uint32_t inv_h2,                 //
-               uint32_t inv_v0,                 //
-               uint32_t inv_v1,                 //
-               uint32_t inv_v2,                 //
-               uint32_t half_width_for_2to1,    //
-               uint32_t half_height_for_2to1,   //
-               uint8_t* scratch_buffer_2k_ptr,  //
-               wuffs_private_impl__swizzle_ycc__upsample_func(*upfuncs)[4][4],
-               wuffs_private_impl__swizzle_ycc__convert_3_func conv3func) =
+  void (*func3)(wuffs_base__pixel_buffer * dst,  //
+                uint32_t x_min_incl,             //
+                uint32_t x_max_excl,             //
+                uint32_t y_min_incl,             //
+                uint32_t y_max_excl,             //
+                const uint8_t* src_ptr0,         //
+                const uint8_t* src_ptr1,         //
+                const uint8_t* src_ptr2,         //
+                uint32_t stride0,                //
+                uint32_t stride1,                //
+                uint32_t stride2,                //
+                uint32_t inv_h0,                 //
+                uint32_t inv_h1,                 //
+                uint32_t inv_h2,                 //
+                uint32_t inv_v0,                 //
+                uint32_t inv_v1,                 //
+                uint32_t inv_v2,                 //
+                uint32_t half_width_for_2to1,    //
+                uint32_t half_height_for_2to1,   //
+                uint8_t* scratch_buffer_2k_ptr,  //
+                wuffs_private_impl__swizzle_ycc__upsample_func(*upfuncs)[4][4],
+                wuffs_private_impl__swizzle_ycc__convert_3_func conv3func) =
       &wuffs_private_impl__swizzle_ycc__general__box_filter;
+
+  void (*func4)(wuffs_base__pixel_buffer * dst,  //
+                uint32_t x_min_incl,             //
+                uint32_t x_max_excl,             //
+                uint32_t y_min_incl,             //
+                uint32_t y_max_excl,             //
+                const uint8_t* src_ptr0,         //
+                const uint8_t* src_ptr1,         //
+                const uint8_t* src_ptr2,         //
+                const uint8_t* src_ptr3,         //
+                uint32_t stride0,                //
+                uint32_t stride1,                //
+                uint32_t stride2,                //
+                uint32_t stride3,                //
+                uint32_t inv_h0,                 //
+                uint32_t inv_h1,                 //
+                uint32_t inv_h2,                 //
+                uint32_t inv_h3,                 //
+                uint32_t inv_v0,                 //
+                uint32_t inv_v1,                 //
+                uint32_t inv_v2,                 //
+                uint32_t inv_v3,                 //
+                uint32_t half_width_for_2to1,    //
+                uint32_t half_height_for_2to1,   //
+                uint8_t* scratch_buffer_2k_ptr,  //
+                wuffs_private_impl__swizzle_ycc__upsample_func(*upfuncs)[4][4],
+                wuffs_private_impl__swizzle_ycc__convert_4_func conv4func) =
+      &wuffs_private_impl__swizzle_ycck__general__box_filter;
 
   wuffs_private_impl__swizzle_ycc__upsample_func upfuncs[4][4];
   memcpy(&upfuncs, &wuffs_private_impl__swizzle_ycc__upsample_funcs,
@@ -29188,8 +29457,10 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   if (triangle_filter_for_2to1 &&
       (wuffs_private_impl__swizzle_has_triangle_upsampler(inv_h0, inv_v0) ||
        wuffs_private_impl__swizzle_has_triangle_upsampler(inv_h1, inv_v1) ||
-       wuffs_private_impl__swizzle_has_triangle_upsampler(inv_h2, inv_v2))) {
-    func = &wuffs_private_impl__swizzle_ycc__general__triangle_filter;
+       wuffs_private_impl__swizzle_has_triangle_upsampler(inv_h2, inv_v2) ||
+       wuffs_private_impl__swizzle_has_triangle_upsampler(inv_h3, inv_v3))) {
+    func3 = &wuffs_private_impl__swizzle_ycc__general__triangle_filter;
+    func4 = &wuffs_private_impl__swizzle_ycck__general__triangle_filter;
 
     upfuncs[0][1] = wuffs_private_impl__swizzle_ycc__upsample_inv_h1v2_triangle;
     upfuncs[1][0] = wuffs_private_impl__swizzle_ycc__upsample_inv_h2v1_triangle;
@@ -29221,23 +29492,23 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
     wuffs_private_impl__swizzle_ycc__convert_4_func conv4func =
         is_rgb_or_cmyk ? &wuffs_private_impl__swizzle_cmyk__convert_4_general
                        : &wuffs_private_impl__swizzle_ycck__convert_4_general;
-    wuffs_private_impl__swizzle_ycck__general__triangle_filter(  //
-        dst, width, height,                                      //
-        src0.ptr, src1.ptr, src2.ptr, src3.ptr,                  //
-        stride0, stride1, stride2, stride3,                      //
-        inv_h0, inv_h1, inv_h2, inv_h3,                          //
-        inv_v0, inv_v1, inv_v2, inv_v3,                          //
-        half_width_for_2to1, half_height_for_2to1,               //
+    (*func4)(                                                 //
+        dst, x_min_incl, x_max_excl, y_min_incl, y_max_excl,  //
+        src0.ptr, src1.ptr, src2.ptr, src3.ptr,               //
+        stride0, stride1, stride2, stride3,                   //
+        inv_h0, inv_h1, inv_h2, inv_h3,                       //
+        inv_v0, inv_v1, inv_v2, inv_v3,                       //
+        half_width_for_2to1, half_height_for_2to1,            //
         scratch_buffer_2k.ptr, &upfuncs, conv4func);
 
   } else {
-    (*func)(                                        //
-        dst, width, height,                         //
-        src0.ptr, src1.ptr, src2.ptr,               //
-        stride0, stride1, stride2,                  //
-        inv_h0, inv_h1, inv_h2,                     //
-        inv_v0, inv_v1, inv_v2,                     //
-        half_width_for_2to1, half_height_for_2to1,  //
+    (*func3)(                                                 //
+        dst, x_min_incl, x_max_excl, y_min_incl, y_max_excl,  //
+        src0.ptr, src1.ptr, src2.ptr,                         //
+        stride0, stride1, stride2,                            //
+        inv_h0, inv_h1, inv_h2,                               //
+        inv_v0, inv_v1, inv_v2,                               //
+        half_width_for_2to1, half_height_for_2to1,            //
         scratch_buffer_2k.ptr, &upfuncs, conv3func);
   }
 
@@ -43660,6 +43931,7 @@ const char wuffs_jpeg__error__bad_sof_marker[] = "#jpeg: bad SOF marker";
 const char wuffs_jpeg__error__bad_sos_marker[] = "#jpeg: bad SOS marker";
 const char wuffs_jpeg__error__bad_header[] = "#jpeg: bad header";
 const char wuffs_jpeg__error__bad_marker[] = "#jpeg: bad marker";
+const char wuffs_jpeg__error__bad_scan_count[] = "#jpeg: bad scan count";
 const char wuffs_jpeg__error__missing_huffman_table[] = "#jpeg: missing Huffman table";
 const char wuffs_jpeg__error__missing_quantization_table[] = "#jpeg: missing Quantization table";
 const char wuffs_jpeg__error__truncated_input[] = "#jpeg: truncated input";
@@ -44004,6 +44276,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__status
 wuffs_jpeg__decoder__decode_sos(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__io_buffer* a_src,
     wuffs_base__slice_u8 a_workbuf);
 
@@ -44086,14 +44359,23 @@ static wuffs_base__status
 wuffs_jpeg__decoder__swizzle_gray(
     wuffs_jpeg__decoder* self,
     wuffs_base__pixel_buffer* a_dst,
-    wuffs_base__slice_u8 a_workbuf);
+    wuffs_base__slice_u8 a_workbuf,
+    uint32_t a_x0,
+    uint32_t a_x1,
+    uint32_t a_y0,
+    uint32_t a_y1,
+    uint64_t a_stride);
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__status
 wuffs_jpeg__decoder__swizzle_colorful(
     wuffs_jpeg__decoder* self,
     wuffs_base__pixel_buffer* a_dst,
-    wuffs_base__slice_u8 a_workbuf);
+    wuffs_base__slice_u8 a_workbuf,
+    uint32_t a_x0,
+    uint32_t a_x1,
+    uint32_t a_y0,
+    uint32_t a_y1);
 
 WUFFS_BASE__GENERATED_C_CODE
 static bool
@@ -44114,6 +44396,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -44122,6 +44405,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu__choosy_default(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -44130,6 +44414,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_ac_high_bits(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -44138,6 +44423,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_ac_low_bit(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -44146,6 +44432,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_dc_high_bits(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -44154,6 +44441,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_dc_low_bit(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my);
@@ -45797,6 +46085,11 @@ wuffs_jpeg__decoder__get_quirk(
     return 0;
   }
 
+  if (a_key == 2u) {
+    if (self->private_impl.f_use_lower_quality) {
+      return 18446744073709551615u;
+    }
+  }
   return 0u;
 }
 
@@ -45818,6 +46111,10 @@ wuffs_jpeg__decoder__set_quirk(
         : wuffs_base__error__initialize_not_called);
   }
 
+  if (a_key == 2u) {
+    self->private_impl.f_use_lower_quality = (a_value >= 9223372036854775808u);
+    return wuffs_base__make_status(NULL);
+  }
   return wuffs_base__make_status(wuffs_base__error__unsupported_option);
 }
 
@@ -47104,14 +47401,27 @@ wuffs_jpeg__decoder__decode_frame(
       if ((v_ddf_status.repr == wuffs_base__suspension__short_read) && (a_src && a_src->meta.closed)) {
         v_ddf_status = wuffs_base__make_status(wuffs_jpeg__error__truncated_input);
       }
-      if (wuffs_base__status__is_error(&v_ddf_status) || (v_scan_count < self->private_impl.f_scan_count)) {
+      if ( ! self->private_impl.f_swizzle_immediately && (wuffs_base__status__is_error(&v_ddf_status) || (v_scan_count < self->private_impl.f_scan_count))) {
         if (self->private_impl.f_sof_marker >= 194u) {
           wuffs_jpeg__decoder__apply_progressive_idct(self, a_workbuf);
         }
         if (self->private_impl.f_num_components == 1u) {
-          v_swizzle_status = wuffs_jpeg__decoder__swizzle_gray(self, a_dst, a_workbuf);
+          v_swizzle_status = wuffs_jpeg__decoder__swizzle_gray(self,
+              a_dst,
+              a_workbuf,
+              0u,
+              4294967295u,
+              0u,
+              4294967295u,
+              ((uint64_t)(self->private_impl.f_components_workbuf_widths[0u])));
         } else {
-          v_swizzle_status = wuffs_jpeg__decoder__swizzle_colorful(self, a_dst, a_workbuf);
+          v_swizzle_status = wuffs_jpeg__decoder__swizzle_colorful(self,
+              a_dst,
+              a_workbuf,
+              0u,
+              4294967295u,
+              0u,
+              4294967295u);
         }
         if (wuffs_base__status__is_error(&v_ddf_status)) {
           status = v_ddf_status;
@@ -47216,9 +47526,14 @@ wuffs_jpeg__decoder__do_decode_frame(
       }
       goto ok;
     }
+    self->private_impl.f_swizzle_immediately = false;
     if (self->private_impl.f_components_workbuf_offsets[8u] > ((uint64_t)(a_workbuf.len))) {
-      status = wuffs_base__make_status(wuffs_base__error__bad_workbuf_length);
-      goto exit;
+      if (self->private_impl.f_sof_marker >= 194u) {
+        status = wuffs_base__make_status(wuffs_base__error__bad_workbuf_length);
+        goto exit;
+      }
+      self->private_impl.f_swizzle_immediately = self->private_impl.f_use_lower_quality;
+      self->private_impl.f_swizzle_immediately_status = wuffs_base__make_status(NULL);
     } else if (self->private_impl.f_components_workbuf_offsets[4u] < self->private_impl.f_components_workbuf_offsets[8u]) {
       wuffs_private_impl__bulk_memset(a_workbuf.ptr + self->private_impl.f_components_workbuf_offsets[4u], (self->private_impl.f_components_workbuf_offsets[8u] - self->private_impl.f_components_workbuf_offsets[4u]), 0u);
     }
@@ -47331,7 +47646,7 @@ wuffs_jpeg__decoder__do_decode_frame(
             a_src->meta.ri = ((size_t)(iop_a_src - a_src->data.ptr));
           }
           WUFFS_BASE__COROUTINE_SUSPENSION_POINT(7);
-          status = wuffs_jpeg__decoder__decode_sos(self, a_src, a_workbuf);
+          status = wuffs_jpeg__decoder__decode_sos(self, a_dst, a_src, a_workbuf);
           if (a_src) {
             iop_a_src = a_src->data.ptr + a_src->meta.ri;
           }
@@ -47694,6 +48009,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__status
 wuffs_jpeg__decoder__decode_sos(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__io_buffer* a_src,
     wuffs_base__slice_u8 a_workbuf) {
   wuffs_base__status status = wuffs_base__make_status(NULL);
@@ -47711,8 +48027,11 @@ wuffs_jpeg__decoder__decode_sos(
   switch (coro_susp_point) {
     WUFFS_BASE__COROUTINE_SUSPENSION_POINT_0;
 
-    if (self->private_impl.f_scan_count >= 64u) {
+    if (self->private_impl.f_scan_count >= 32u) {
       status = wuffs_base__make_status(wuffs_jpeg__error__unsupported_scan_count);
+      goto exit;
+    } else if ((self->private_impl.f_scan_count > 0u) &&  ! self->private_impl.f_expect_multiple_scans) {
+      status = wuffs_base__make_status(wuffs_jpeg__error__bad_scan_count);
       goto exit;
     }
     WUFFS_BASE__COROUTINE_SUSPENSION_POINT(1);
@@ -47743,12 +48062,26 @@ wuffs_jpeg__decoder__decode_sos(
           wuffs_jpeg__decoder__load_mcu_blocks(self, v_mx, v_my, a_workbuf);
         }
         while (true) {
-          v_decode_mcu_result = wuffs_jpeg__decoder__decode_mcu(self, a_workbuf, v_mx, v_my);
+          v_decode_mcu_result = wuffs_jpeg__decoder__decode_mcu(self,
+              a_dst,
+              a_workbuf,
+              v_mx,
+              v_my);
           if (v_decode_mcu_result == 0u) {
             break;
-          } else if (v_decode_mcu_result != 1u) {
+          } else if (v_decode_mcu_result == 1u) {
+          } else if (v_decode_mcu_result == 2u) {
             status = wuffs_base__make_status(wuffs_jpeg__error__internal_error_inconsistent_decoder_state);
             goto exit;
+          } else {
+            status = self->private_impl.f_swizzle_immediately_status;
+            if (wuffs_base__status__is_error(&status)) {
+              goto exit;
+            } else if (wuffs_base__status__is_suspension(&status)) {
+              status = wuffs_base__make_status(wuffs_base__error__cannot_return_a_suspension);
+              goto exit;
+            }
+            goto ok;
           }
           while (true) {
             v_bitstream_length = ((uint32_t)(self->private_impl.f_bitstream_wi - self->private_impl.f_bitstream_ri));
@@ -47936,6 +48269,9 @@ wuffs_jpeg__decoder__prepare_scan(
         }
       }
       v_i += 1u;
+    }
+    if (self->private_impl.f_scan_count == 0u) {
+      self->private_impl.f_expect_multiple_scans = ((self->private_impl.f_sof_marker >= 194u) || (self->private_impl.f_scan_num_components < self->private_impl.f_num_components));
     }
     if (self->private_impl.f_sof_marker < 194u) {
       self->private_data.s_prepare_scan.scratch = 3u;
@@ -48186,6 +48522,7 @@ wuffs_jpeg__decoder__calculate_multiple_component_scan_fields(
   uint32_t v_b = 0;
   uint32_t v_bx_offset = 0;
   uint32_t v_by_offset = 0;
+  uint32_t v_sibo = 0;
   uint8_t v_ssel = 0;
   uint8_t v_csel = 0;
 
@@ -48198,6 +48535,7 @@ wuffs_jpeg__decoder__calculate_multiple_component_scan_fields(
     v_h = ((uint32_t)(self->private_impl.f_components_h[self->private_impl.f_scan_comps_cselector[v_i]]));
     v_v = ((uint32_t)(self->private_impl.f_components_v[self->private_impl.f_scan_comps_cselector[v_i]]));
     v_hv = (((uint32_t)(self->private_impl.f_components_h[self->private_impl.f_scan_comps_cselector[v_i]])) * ((uint32_t)(self->private_impl.f_components_v[self->private_impl.f_scan_comps_cselector[v_i]])));
+    self->private_impl.f_swizzle_immediately_c_offsets[v_i] = ((uint32_t)(64u * v_total_hv));
     v_total_hv += v_hv;
     while (v_hv > 0u) {
       self->private_impl.f_scan_comps_bx_offset[(v_b & 15u)] = ((uint8_t)((v_bx_offset & 3u)));
@@ -48220,6 +48558,7 @@ wuffs_jpeg__decoder__calculate_multiple_component_scan_fields(
     return true;
   }
   self->private_impl.f_mcu_num_blocks = v_total_hv;
+  self->private_impl.f_swizzle_immediately_c_offsets[self->private_impl.f_scan_num_components] = ((uint32_t)(64u * v_total_hv));
   v_b = 0u;
   while (v_b < self->private_impl.f_mcu_num_blocks) {
     v_ssel = self->private_impl.f_mcu_blocks_sselector[v_b];
@@ -48229,6 +48568,8 @@ wuffs_jpeg__decoder__calculate_multiple_component_scan_fields(
     self->private_impl.f_mcu_blocks_my_mul[v_b] = (8u * ((uint32_t)(self->private_impl.f_components_v[v_csel])) * self->private_impl.f_components_workbuf_widths[v_csel]);
     self->private_impl.f_mcu_blocks_dc_hselector[v_b] = ((uint8_t)(0u | self->private_impl.f_scan_comps_td[v_ssel]));
     self->private_impl.f_mcu_blocks_ac_hselector[v_b] = ((uint8_t)(4u | self->private_impl.f_scan_comps_ta[v_ssel]));
+    v_sibo = ((uint32_t)(self->private_impl.f_swizzle_immediately_c_offsets[v_csel] + ((8u * ((uint32_t)(self->private_impl.f_scan_comps_bx_offset[v_b]))) + (64u * ((uint32_t)(self->private_impl.f_scan_comps_by_offset[v_b])) * ((uint32_t)(self->private_impl.f_components_h[v_csel]))))));
+    self->private_impl.f_swizzle_immediately_b_offsets[v_b] = wuffs_base__u32__min(v_sibo, 576u);
     v_b += 1u;
   }
   self->private_impl.f_scan_width_in_mcus = self->private_impl.f_width_in_mcus;
@@ -48564,15 +48905,21 @@ static wuffs_base__status
 wuffs_jpeg__decoder__swizzle_gray(
     wuffs_jpeg__decoder* self,
     wuffs_base__pixel_buffer* a_dst,
-    wuffs_base__slice_u8 a_workbuf) {
+    wuffs_base__slice_u8 a_workbuf,
+    uint32_t a_x0,
+    uint32_t a_x1,
+    uint32_t a_y0,
+    uint32_t a_y1,
+    uint64_t a_stride) {
   wuffs_base__pixel_format v_dst_pixfmt = {0};
   uint32_t v_dst_bits_per_pixel = 0;
   uint32_t v_dst_bytes_per_pixel = 0;
-  uint64_t v_dst_length = 0;
+  uint64_t v_x0 = 0;
+  uint64_t v_x1 = 0;
   wuffs_base__table_u8 v_tab = {0};
   wuffs_base__slice_u8 v_dst = {0};
   uint32_t v_y = 0;
-  uint64_t v_stride = 0;
+  uint32_t v_y1 = 0;
 
   v_dst_pixfmt = wuffs_base__pixel_buffer__pixel_format(a_dst);
   v_dst_bits_per_pixel = wuffs_base__pixel_format__bits_per_pixel(&v_dst_pixfmt);
@@ -48580,18 +48927,24 @@ wuffs_jpeg__decoder__swizzle_gray(
     return wuffs_base__make_status(wuffs_base__error__unsupported_option);
   }
   v_dst_bytes_per_pixel = (v_dst_bits_per_pixel / 8u);
-  v_dst_length = ((uint64_t)((v_dst_bytes_per_pixel * self->private_impl.f_width)));
+  v_x0 = ((uint64_t)((v_dst_bytes_per_pixel * wuffs_base__u32__min(a_x0, self->private_impl.f_width))));
+  v_x1 = ((uint64_t)((v_dst_bytes_per_pixel * wuffs_base__u32__min(a_x1, self->private_impl.f_width))));
   v_tab = wuffs_base__pixel_buffer__plane(a_dst, 0u);
-  v_y = 0u;
-  while (v_y < self->private_impl.f_height) {
+  v_y = a_y0;
+  v_y1 = wuffs_base__u32__min(a_y1, self->private_impl.f_height);
+  while (v_y < v_y1) {
     v_dst = wuffs_private_impl__table_u8__row_u32(v_tab, v_y);
-    if (v_dst_length < ((uint64_t)(v_dst.len))) {
-      v_dst = wuffs_base__slice_u8__subslice_j(v_dst, v_dst_length);
+    if (v_x1 < ((uint64_t)(v_dst.len))) {
+      v_dst = wuffs_base__slice_u8__subslice_j(v_dst, v_x1);
+    }
+    if (v_x0 < ((uint64_t)(v_dst.len))) {
+      v_dst = wuffs_base__slice_u8__subslice_i(v_dst, v_x0);
+    } else {
+      v_dst = wuffs_base__utility__empty_slice_u8();
     }
     wuffs_base__pixel_swizzler__swizzle_interleaved_from_slice(&self->private_impl.f_swizzler, v_dst, wuffs_base__pixel_buffer__palette_or_else(a_dst, wuffs_base__make_slice_u8(self->private_data.f_dst_palette, 1024)), a_workbuf);
-    v_stride = ((uint64_t)(self->private_impl.f_components_workbuf_widths[0u]));
-    if (v_stride <= ((uint64_t)(a_workbuf.len))) {
-      a_workbuf = wuffs_base__slice_u8__subslice_i(a_workbuf, v_stride);
+    if (a_stride <= ((uint64_t)(a_workbuf.len))) {
+      a_workbuf = wuffs_base__slice_u8__subslice_i(a_workbuf, a_stride);
     } else {
       a_workbuf = wuffs_base__utility__empty_slice_u8();
     }
@@ -48607,54 +48960,109 @@ static wuffs_base__status
 wuffs_jpeg__decoder__swizzle_colorful(
     wuffs_jpeg__decoder* self,
     wuffs_base__pixel_buffer* a_dst,
-    wuffs_base__slice_u8 a_workbuf) {
+    wuffs_base__slice_u8 a_workbuf,
+    uint32_t a_x0,
+    uint32_t a_x1,
+    uint32_t a_y0,
+    uint32_t a_y1) {
+  uint64_t v_i = 0;
+  uint64_t v_j = 0;
   wuffs_base__slice_u8 v_src0 = {0};
   wuffs_base__slice_u8 v_src1 = {0};
   wuffs_base__slice_u8 v_src2 = {0};
   wuffs_base__slice_u8 v_src3 = {0};
+  uint32_t v_width0 = 0;
+  uint32_t v_width1 = 0;
+  uint32_t v_width2 = 0;
+  uint32_t v_width3 = 0;
+  uint32_t v_height0 = 0;
+  uint32_t v_height1 = 0;
+  uint32_t v_height2 = 0;
+  uint32_t v_height3 = 0;
   wuffs_base__status v_status = wuffs_base__make_status(NULL);
 
-  if ((self->private_impl.f_components_workbuf_offsets[0u] <= self->private_impl.f_components_workbuf_offsets[1u]) && (self->private_impl.f_components_workbuf_offsets[1u] <= ((uint64_t)(a_workbuf.len)))) {
-    v_src0 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
-        self->private_impl.f_components_workbuf_offsets[0u],
-        self->private_impl.f_components_workbuf_offsets[1u]);
-  }
-  if ((self->private_impl.f_components_workbuf_offsets[1u] <= self->private_impl.f_components_workbuf_offsets[2u]) && (self->private_impl.f_components_workbuf_offsets[2u] <= ((uint64_t)(a_workbuf.len)))) {
-    v_src1 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
-        self->private_impl.f_components_workbuf_offsets[1u],
-        self->private_impl.f_components_workbuf_offsets[2u]);
-  }
-  if ((self->private_impl.f_components_workbuf_offsets[2u] <= self->private_impl.f_components_workbuf_offsets[3u]) && (self->private_impl.f_components_workbuf_offsets[3u] <= ((uint64_t)(a_workbuf.len)))) {
-    v_src2 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
-        self->private_impl.f_components_workbuf_offsets[2u],
-        self->private_impl.f_components_workbuf_offsets[3u]);
-  }
-  if ((self->private_impl.f_components_workbuf_offsets[3u] <= self->private_impl.f_components_workbuf_offsets[4u]) && (self->private_impl.f_components_workbuf_offsets[4u] <= ((uint64_t)(a_workbuf.len)))) {
-    v_src3 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
-        self->private_impl.f_components_workbuf_offsets[3u],
-        self->private_impl.f_components_workbuf_offsets[4u]);
+  if (self->private_impl.f_swizzle_immediately) {
+    v_i = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[0u]));
+    v_j = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[1u]));
+    if ((v_i <= v_j) && (v_j <= 640u)) {
+      v_src0 = wuffs_base__make_slice_u8_ij(self->private_data.f_swizzle_immediately_buffer, v_i, v_j);
+      v_width0 = (8u * ((uint32_t)(self->private_impl.f_components_h[0u])));
+      v_height0 = (8u * ((uint32_t)(self->private_impl.f_components_v[0u])));
+    }
+    v_i = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[1u]));
+    v_j = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[2u]));
+    if ((v_i <= v_j) && (v_j <= 640u)) {
+      v_src1 = wuffs_base__make_slice_u8_ij(self->private_data.f_swizzle_immediately_buffer, v_i, v_j);
+      v_width1 = (8u * ((uint32_t)(self->private_impl.f_components_h[1u])));
+      v_height1 = (8u * ((uint32_t)(self->private_impl.f_components_v[1u])));
+    }
+    v_i = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[2u]));
+    v_j = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[3u]));
+    if ((v_i <= v_j) && (v_j <= 640u)) {
+      v_src2 = wuffs_base__make_slice_u8_ij(self->private_data.f_swizzle_immediately_buffer, v_i, v_j);
+      v_width2 = (8u * ((uint32_t)(self->private_impl.f_components_h[2u])));
+      v_height2 = (8u * ((uint32_t)(self->private_impl.f_components_v[2u])));
+    }
+    v_i = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[3u]));
+    v_j = ((uint64_t)(self->private_impl.f_swizzle_immediately_c_offsets[4u]));
+    if ((v_i <= v_j) && (v_j <= 640u)) {
+      v_src3 = wuffs_base__make_slice_u8_ij(self->private_data.f_swizzle_immediately_buffer, v_i, v_j);
+      v_width3 = (8u * ((uint32_t)(self->private_impl.f_components_h[3u])));
+      v_height3 = (8u * ((uint32_t)(self->private_impl.f_components_v[3u])));
+    }
+  } else {
+    if ((self->private_impl.f_components_workbuf_offsets[0u] <= self->private_impl.f_components_workbuf_offsets[1u]) && (self->private_impl.f_components_workbuf_offsets[1u] <= ((uint64_t)(a_workbuf.len)))) {
+      v_src0 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
+          self->private_impl.f_components_workbuf_offsets[0u],
+          self->private_impl.f_components_workbuf_offsets[1u]);
+      v_width0 = self->private_impl.f_components_workbuf_widths[0u];
+      v_height0 = self->private_impl.f_components_workbuf_heights[0u];
+    }
+    if ((self->private_impl.f_components_workbuf_offsets[1u] <= self->private_impl.f_components_workbuf_offsets[2u]) && (self->private_impl.f_components_workbuf_offsets[2u] <= ((uint64_t)(a_workbuf.len)))) {
+      v_src1 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
+          self->private_impl.f_components_workbuf_offsets[1u],
+          self->private_impl.f_components_workbuf_offsets[2u]);
+      v_width1 = self->private_impl.f_components_workbuf_widths[1u];
+      v_height1 = self->private_impl.f_components_workbuf_heights[1u];
+    }
+    if ((self->private_impl.f_components_workbuf_offsets[2u] <= self->private_impl.f_components_workbuf_offsets[3u]) && (self->private_impl.f_components_workbuf_offsets[3u] <= ((uint64_t)(a_workbuf.len)))) {
+      v_src2 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
+          self->private_impl.f_components_workbuf_offsets[2u],
+          self->private_impl.f_components_workbuf_offsets[3u]);
+      v_width2 = self->private_impl.f_components_workbuf_widths[2u];
+      v_height2 = self->private_impl.f_components_workbuf_heights[2u];
+    }
+    if ((self->private_impl.f_components_workbuf_offsets[3u] <= self->private_impl.f_components_workbuf_offsets[4u]) && (self->private_impl.f_components_workbuf_offsets[4u] <= ((uint64_t)(a_workbuf.len)))) {
+      v_src3 = wuffs_base__slice_u8__subslice_ij(a_workbuf,
+          self->private_impl.f_components_workbuf_offsets[3u],
+          self->private_impl.f_components_workbuf_offsets[4u]);
+      v_width3 = self->private_impl.f_components_workbuf_widths[3u];
+      v_height3 = self->private_impl.f_components_workbuf_heights[3u];
+    }
   }
   v_status = wuffs_base__pixel_swizzler__swizzle_ycck(&self->private_impl.f_swizzler,
       a_dst,
       wuffs_base__pixel_buffer__palette_or_else(a_dst, wuffs_base__make_slice_u8(self->private_data.f_dst_palette, 1024)),
-      self->private_impl.f_width,
-      self->private_impl.f_height,
+      (a_x0 & 65535u),
+      wuffs_base__u32__min(a_x1, self->private_impl.f_width),
+      (a_y0 & 65535u),
+      wuffs_base__u32__min(a_y1, self->private_impl.f_height),
       v_src0,
       v_src1,
       v_src2,
       v_src3,
-      self->private_impl.f_components_workbuf_widths[0u],
-      self->private_impl.f_components_workbuf_widths[1u],
-      self->private_impl.f_components_workbuf_widths[2u],
-      self->private_impl.f_components_workbuf_widths[3u],
-      self->private_impl.f_components_workbuf_heights[0u],
-      self->private_impl.f_components_workbuf_heights[1u],
-      self->private_impl.f_components_workbuf_heights[2u],
-      self->private_impl.f_components_workbuf_heights[3u],
-      self->private_impl.f_components_workbuf_widths[0u],
-      self->private_impl.f_components_workbuf_widths[1u],
-      self->private_impl.f_components_workbuf_widths[2u],
-      self->private_impl.f_components_workbuf_widths[3u],
+      v_width0,
+      v_width1,
+      v_width2,
+      v_width3,
+      v_height0,
+      v_height1,
+      v_height2,
+      v_height3,
+      v_width0,
+      v_width1,
+      v_width2,
+      v_width3,
       self->private_impl.f_components_h[0u],
       self->private_impl.f_components_h[1u],
       self->private_impl.f_components_h[2u],
@@ -48664,7 +49072,7 @@ wuffs_jpeg__decoder__swizzle_colorful(
       self->private_impl.f_components_v[2u],
       self->private_impl.f_components_v[3u],
       self->private_impl.f_is_rgb_or_cmyk,
-      true,
+      ! self->private_impl.f_use_lower_quality,
       wuffs_base__make_slice_u8(self->private_data.f_swizzle_ycck_scratch_buffer_2k, 2048));
   return wuffs_private_impl__status__ensure_not_a_suspension(v_status);
 }
@@ -48776,6 +49184,7 @@ wuffs_jpeg__decoder__restart_frame(
   }
   self->private_impl.f_call_sequence = 40u;
   self->private_impl.f_bitstream_is_closed = false;
+  self->private_impl.f_expect_multiple_scans = false;
   self->private_impl.f_frame_config_io_position = a_io_position;
   self->private_impl.f_scan_count = 0u;
   self->private_impl.f_restart_interval = self->private_impl.f_saved_restart_interval;
@@ -48874,6 +49283,9 @@ wuffs_jpeg__decoder__workbuf_len(
     return wuffs_base__utility__empty_range_ii_u64();
   }
 
+  if (self->private_impl.f_use_lower_quality && (self->private_impl.f_sof_marker < 194u)) {
+    return wuffs_base__utility__make_range_ii_u64(0u, self->private_impl.f_components_workbuf_offsets[8u]);
+  }
   return wuffs_base__utility__make_range_ii_u64(self->private_impl.f_components_workbuf_offsets[8u], self->private_impl.f_components_workbuf_offsets[8u]);
 }
 
@@ -49510,16 +49922,18 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
-  return (*self->private_impl.choosy_decode_mcu)(self, a_workbuf, a_mx, a_my);
+  return (*self->private_impl.choosy_decode_mcu)(self, a_dst, a_workbuf, a_mx, a_my);
 }
 
 WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu__choosy_default(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
@@ -49719,11 +50133,47 @@ wuffs_jpeg__decoder__decode_mcu__choosy_default(
         if (self->private_impl.f_test_only_interrupt_decode_mcu) {
           goto label__goto_done__break;
         }
-        v_csel = self->private_impl.f_scan_comps_cselector[self->private_impl.f_mcu_blocks_sselector[v_mcb]];
-        v_stride = ((uint64_t)(self->private_impl.f_components_workbuf_widths[v_csel]));
-        v_offset = (self->private_impl.f_mcu_blocks_offset[v_mcb] + (((uint64_t)(self->private_impl.f_mcu_blocks_mx_mul[v_mcb])) * ((uint64_t)(a_mx))) + (((uint64_t)(self->private_impl.f_mcu_blocks_my_mul[v_mcb])) * ((uint64_t)(a_my))));
-        if (v_offset <= ((uint64_t)(a_workbuf.len))) {
-          wuffs_jpeg__decoder__decode_idct(self, wuffs_base__slice_u8__subslice_i(a_workbuf, v_offset), v_stride, ((uint32_t)(self->private_impl.f_components_tq[v_csel])));
+        if ( ! self->private_impl.f_swizzle_immediately) {
+          v_csel = self->private_impl.f_scan_comps_cselector[self->private_impl.f_mcu_blocks_sselector[v_mcb]];
+          v_stride = ((uint64_t)(self->private_impl.f_components_workbuf_widths[v_csel]));
+          v_offset = (self->private_impl.f_mcu_blocks_offset[v_mcb] + (((uint64_t)(self->private_impl.f_mcu_blocks_mx_mul[v_mcb])) * ((uint64_t)(a_mx))) + (((uint64_t)(self->private_impl.f_mcu_blocks_my_mul[v_mcb])) * ((uint64_t)(a_my))));
+          if (v_offset <= ((uint64_t)(a_workbuf.len))) {
+            wuffs_jpeg__decoder__decode_idct(self, wuffs_base__slice_u8__subslice_i(a_workbuf, v_offset), v_stride, ((uint32_t)(self->private_impl.f_components_tq[v_csel])));
+          }
+        } else if (self->private_impl.f_num_components == 1u) {
+          wuffs_jpeg__decoder__decode_idct(self, wuffs_base__make_slice_u8(self->private_data.f_swizzle_immediately_buffer, 64), 8u, ((uint32_t)(self->private_impl.f_components_tq[v_csel])));
+          self->private_impl.f_swizzle_immediately_status = wuffs_jpeg__decoder__swizzle_gray(self,
+              a_dst,
+              wuffs_base__make_slice_u8(self->private_data.f_swizzle_immediately_buffer, 64),
+              ((a_mx + 0u) * 8u),
+              ((a_mx + 1u) * 8u),
+              ((a_my + 0u) * 8u),
+              ((a_my + 1u) * 8u),
+              8u);
+          if ( ! wuffs_base__status__is_ok(&self->private_impl.f_swizzle_immediately_status)) {
+            v_ret = 3u;
+            goto label__goto_done__break;
+          }
+          break;
+        } else {
+          v_csel = self->private_impl.f_scan_comps_cselector[self->private_impl.f_mcu_blocks_sselector[v_mcb]];
+          v_stride = (8u * ((uint64_t)(self->private_impl.f_components_h[v_csel])));
+          wuffs_jpeg__decoder__decode_idct(self, wuffs_base__make_slice_u8_ij(self->private_data.f_swizzle_immediately_buffer, self->private_impl.f_swizzle_immediately_b_offsets[v_mcb], 640), v_stride, ((uint32_t)(self->private_impl.f_components_tq[v_csel])));
+          if (self->private_impl.f_mcu_current_block < self->private_impl.f_mcu_num_blocks) {
+            continue;
+          }
+          self->private_impl.f_swizzle_immediately_status = wuffs_jpeg__decoder__swizzle_colorful(self,
+              a_dst,
+              wuffs_base__utility__empty_slice_u8(),
+              ((a_mx + 0u) * 8u * ((uint32_t)(self->private_impl.f_max_incl_components_h))),
+              ((a_mx + 1u) * 8u * ((uint32_t)(self->private_impl.f_max_incl_components_h))),
+              ((a_my + 0u) * 8u * ((uint32_t)(self->private_impl.f_max_incl_components_v))),
+              ((a_my + 1u) * 8u * ((uint32_t)(self->private_impl.f_max_incl_components_v))));
+          if ( ! wuffs_base__status__is_ok(&self->private_impl.f_swizzle_immediately_status)) {
+            v_ret = 3u;
+            goto label__goto_done__break;
+          }
+          break;
         }
       }
       self->private_impl.f_mcu_current_block = 0u;
@@ -49752,6 +50202,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_ac_high_bits(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
@@ -49919,6 +50370,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_ac_low_bit(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
@@ -50180,6 +50632,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_dc_high_bits(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
@@ -50320,6 +50773,7 @@ WUFFS_BASE__GENERATED_C_CODE
 static uint32_t
 wuffs_jpeg__decoder__decode_mcu_progressive_dc_low_bit(
     wuffs_jpeg__decoder* self,
+    wuffs_base__pixel_buffer* a_dst,
     wuffs_base__slice_u8 a_workbuf,
     uint32_t a_mx,
     uint32_t a_my) {
@@ -77074,15 +77528,13 @@ DecodeCborCallbacks::Done(DecodeCborResult& result,
                           sync_io::Input& input,
                           IOBuffer& buffer) {}
 
-DecodeCborArgQuirks::DecodeCborArgQuirks(wuffs_base__slice_u32 repr0)
-    : repr(repr0) {}
-
-DecodeCborArgQuirks::DecodeCborArgQuirks(uint32_t* ptr0, size_t len0)
-    : repr(wuffs_base__make_slice_u32(ptr0, len0)) {}
+DecodeCborArgQuirks::DecodeCborArgQuirks(const QuirkKeyValuePair* ptr0,
+                                         const size_t len0)
+    : ptr(ptr0), len(len0) {}
 
 DecodeCborArgQuirks  //
 DecodeCborArgQuirks::DefaultValue() {
-  return DecodeCborArgQuirks(wuffs_base__empty_slice_u32());
+  return DecodeCborArgQuirks(nullptr, 0);
 }
 
 DecodeCborResult  //
@@ -77111,8 +77563,8 @@ DecodeCbor(DecodeCborCallbacks& callbacks,
       ret_error_message = "wuffs_aux::DecodeCbor: out of memory";
       goto done;
     }
-    for (size_t i = 0; i < quirks.repr.len; i++) {
-      dec->set_quirk(quirks.repr.ptr[i], 1);
+    for (size_t i = 0; i < quirks.len; i++) {
+      dec->set_quirk(quirks.ptr[i].first, quirks.ptr[i].second);
     }
 
     // Prepare the wuffs_base__tok_buffer. 256 tokens is 2KiB.
@@ -77605,15 +78057,13 @@ const char DecodeImage_UnsupportedPixelConfiguration[] =  //
 const char DecodeImage_UnsupportedPixelFormat[] =  //
     "wuffs_aux::DecodeImage: unsupported pixel format";
 
-DecodeImageArgQuirks::DecodeImageArgQuirks(wuffs_base__slice_u32 repr0)
-    : repr(repr0) {}
-
-DecodeImageArgQuirks::DecodeImageArgQuirks(uint32_t* ptr0, size_t len0)
-    : repr(wuffs_base__make_slice_u32(ptr0, len0)) {}
+DecodeImageArgQuirks::DecodeImageArgQuirks(const QuirkKeyValuePair* ptr0,
+                                           const size_t len0)
+    : ptr(ptr0), len(len0) {}
 
 DecodeImageArgQuirks  //
 DecodeImageArgQuirks::DefaultValue() {
-  return DecodeImageArgQuirks(wuffs_base__empty_slice_u32());
+  return DecodeImageArgQuirks(nullptr, 0);
 }
 
 DecodeImageArgFlags::DecodeImageArgFlags(uint64_t repr0) : repr(repr0) {}
@@ -77711,7 +78161,8 @@ DecodeImage0(wuffs_base__image_decoder::unique_ptr& image_decoder,
              DecodeImageCallbacks& callbacks,
              sync_io::Input& input,
              wuffs_base__io_buffer& io_buf,
-             wuffs_base__slice_u32 quirks,
+             const QuirkKeyValuePair* quirks_ptr,
+             const size_t quirks_len,
              uint64_t flags,
              wuffs_base__pixel_blend pixel_blend,
              wuffs_base__color_u32_argb_premul background_color,
@@ -77794,8 +78245,8 @@ redirect:
     }
 
     // Apply quirks.
-    for (size_t i = 0; i < quirks.len; i++) {
-      image_decoder->set_quirk(quirks.ptr[i], 1);
+    for (size_t i = 0; i < quirks_len; i++) {
+      image_decoder->set_quirk(quirks_ptr[i].first, quirks_ptr[i].second);
     }
 
     // Apply flags.
@@ -78022,10 +78473,10 @@ DecodeImage(DecodeImageCallbacks& callbacks,
   }
 
   wuffs_base__image_decoder::unique_ptr image_decoder(nullptr);
-  DecodeImageResult result =
-      DecodeImage0(image_decoder, callbacks, input, *io_buf, quirks.repr,
-                   flags.repr, pixel_blend.repr, background_color.repr,
-                   max_incl_dimension.repr, max_incl_metadata_length.repr);
+  DecodeImageResult result = DecodeImage0(
+      image_decoder, callbacks, input, *io_buf, quirks.ptr, quirks.len,
+      flags.repr, pixel_blend.repr, background_color.repr,
+      max_incl_dimension.repr, max_incl_metadata_length.repr);
   callbacks.Done(result, input, *io_buf, std::move(image_decoder));
   return result;
 }
@@ -78060,15 +78511,13 @@ const char DecodeJson_BadJsonPointer[] =  //
 const char DecodeJson_NoMatch[] =  //
     "wuffs_aux::DecodeJson: no match";
 
-DecodeJsonArgQuirks::DecodeJsonArgQuirks(wuffs_base__slice_u32 repr0)
-    : repr(repr0) {}
-
-DecodeJsonArgQuirks::DecodeJsonArgQuirks(uint32_t* ptr0, size_t len0)
-    : repr(wuffs_base__make_slice_u32(ptr0, len0)) {}
+DecodeJsonArgQuirks::DecodeJsonArgQuirks(const QuirkKeyValuePair* ptr0,
+                                         const size_t len0)
+    : ptr(ptr0), len(len0) {}
 
 DecodeJsonArgQuirks  //
 DecodeJsonArgQuirks::DefaultValue() {
-  return DecodeJsonArgQuirks(wuffs_base__empty_slice_u32());
+  return DecodeJsonArgQuirks(nullptr, 0);
 }
 
 DecodeJsonArgJsonPointer::DecodeJsonArgJsonPointer(std::string repr0)
@@ -78413,11 +78862,11 @@ DecodeJson(DecodeJsonCallbacks& callbacks,
       goto done;
     }
     bool allow_tilde_n_tilde_r_tilde_t = false;
-    for (size_t i = 0; i < quirks.repr.len; i++) {
-      dec->set_quirk(quirks.repr.ptr[i], 1);
-      if (quirks.repr.ptr[i] ==
+    for (size_t i = 0; i < quirks.len; i++) {
+      dec->set_quirk(quirks.ptr[i].first, quirks.ptr[i].second);
+      if (quirks.ptr[i].first ==
           WUFFS_JSON__QUIRK_JSON_POINTER_ALLOW_TILDE_N_TILDE_R_TILDE_T) {
-        allow_tilde_n_tilde_r_tilde_t = true;
+        allow_tilde_n_tilde_r_tilde_t = (quirks.ptr[i].second != 0);
       }
     }
 
