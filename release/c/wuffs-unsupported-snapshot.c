@@ -31900,6 +31900,10 @@ wuffs_base__pixel_swizzler__prepare(wuffs_base__pixel_swizzler* p,
     case WUFFS_BASE__PIXEL_FORMAT__Y:
       break;
 #endif
+#if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_YA_NONPREMUL)
+    case WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL:
+      break;
+#endif
 #if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGR_565)
     case WUFFS_BASE__PIXEL_FORMAT__BGR_565:
       break;
@@ -33497,6 +33501,10 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   switch (dst->pixcfg.private_impl.pixfmt.repr) {
 #if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_Y)
     case WUFFS_BASE__PIXEL_FORMAT__Y:
+      break;
+#endif
+#if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_YA_NONPREMUL)
+    case WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL:
       break;
 #endif
 #if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGR_565)
@@ -91648,6 +91656,15 @@ wuffs_drop_in__stb__make_decoder(   //
 
 // --------
 
+static int                          //
+wuffs_drop_in__stb__channel_count(  //
+    wuffs_base__pixel_format pixfmt) {
+  uint32_t n_color = wuffs_base__pixel_format__coloration(&pixfmt);
+  uint32_t n_alpha = wuffs_base__pixel_format__transparency(&pixfmt) !=
+                     WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__OPAQUE;
+  return (int)(n_color + n_alpha);
+}
+
 static stbi_uc*                      //
 wuffs_drop_in__stb__load1(           //
     wuffs_base__io_buffer* srcbuf,   //
@@ -91655,7 +91672,6 @@ wuffs_drop_in__stb__load1(           //
     void* user,                      //
     wuffs_base__image_decoder* dec,  //
     wuffs_base__image_config* ic,    //
-    uint32_t dst_pixfmt,             //
     int desired_channels,            //
     int info_only) {
   // Favor faster decodes over rejecting invalid checksums.
@@ -91688,30 +91704,35 @@ wuffs_drop_in__stb__load1(           //
     return NULL;
   }
 
+  wuffs_base__pixel_format dst_pixfmt = wuffs_base__make_pixel_format(0);
+  wuffs_base__pixel_format src_pixfmt =
+      wuffs_base__pixel_config__pixel_format(&ic->pixcfg);
   if (desired_channels == 0) {
-    wuffs_base__pixel_format src_pixfmt =
-        wuffs_base__pixel_config__pixel_format(&ic->pixcfg);
-    uint32_t n_color = wuffs_base__pixel_format__coloration(&src_pixfmt);
-    uint32_t n_alpha = wuffs_base__pixel_format__transparency(&src_pixfmt) !=
-                       WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__OPAQUE;
-    desired_channels = (int)(n_color + n_alpha);
-    switch (desired_channels) {
+    desired_channels = wuffs_drop_in__stb__channel_count(src_pixfmt);
+  }
+  switch (desired_channels) {
     case 1:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__Y;
+      dst_pixfmt.repr = WUFFS_BASE__PIXEL_FORMAT__Y;
       break;
     case 2:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL;
+      // As of March 2026, Wuffs doesn't support converting the full range of
+      // source pixel formats to the YA_NONPREMUL destination pixel format.
+      if (src_pixfmt.repr != WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL) {
+        wuffs_drop_in__stb__g_failure_reason =
+            "unsupported YA_NONPREMUL format conversion";
+        return NULL;
+      }
+      dst_pixfmt.repr = WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL;
       break;
     case 3:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGB;
+      dst_pixfmt.repr = WUFFS_BASE__PIXEL_FORMAT__RGB;
       break;
     case 4:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
+      dst_pixfmt.repr = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
       break;
     default:
-      wuffs_drop_in__stb__g_failure_reason = "unsupported format conversion";
+      wuffs_drop_in__stb__g_failure_reason = "internal format conversion error";
       return NULL;
-    }
   }
 
   uint64_t pixbuf_len = (uint64_t)w * (uint64_t)h * (uint64_t)desired_channels;
@@ -91738,7 +91759,7 @@ wuffs_drop_in__stb__load1(           //
       wuffs_base__make_slice_u8((uint8_t*)workbuf_ptr, (size_t)workbuf_len);
 
   wuffs_base__pixel_config pc = wuffs_base__null_pixel_config();
-  wuffs_base__pixel_config__set(&pc, dst_pixfmt,
+  wuffs_base__pixel_config__set(&pc, dst_pixfmt.repr,
                                 WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, w, h);
 
   wuffs_base__pixel_buffer pb = wuffs_base__null_pixel_buffer();
@@ -91789,26 +91810,9 @@ wuffs_drop_in__stb__load0(          //
     int* channels_in_file,          //
     int desired_channels,           //
     int info_only) {
-  uint32_t dst_pixfmt = 0;
-  switch (desired_channels) {
-    case 0:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__INVALID;
-      break;
-    case 1:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__Y;
-      break;
-    case 2:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL;
-      break;
-    case 3:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGB;
-      break;
-    case 4:
-      dst_pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
-      break;
-    default:
-      wuffs_drop_in__stb__g_failure_reason = "unsupported format conversion";
-      return NULL;
+  if ((desired_channels < 0) || (4 < desired_channels)) {
+    wuffs_drop_in__stb__g_failure_reason = "bad desired_channels argument";
+    return NULL;
   }
 
   wuffs_base__image_decoder* dec =
@@ -91821,8 +91825,8 @@ wuffs_drop_in__stb__load0(          //
   }
 
   wuffs_base__image_config ic = wuffs_base__null_image_config();
-  stbi_uc* ret = wuffs_drop_in__stb__load1(
-      srcbuf, clbk, user, dec, &ic, dst_pixfmt, desired_channels, info_only);
+  stbi_uc* ret = wuffs_drop_in__stb__load1(srcbuf, clbk, user, dec, &ic,
+                                           desired_channels, info_only);
   free(dec);
 
   if (!info_only && !ret) {
@@ -91836,12 +91840,8 @@ wuffs_drop_in__stb__load0(          //
     *y = (int)wuffs_base__pixel_config__height(&ic.pixcfg);
   }
   if (channels_in_file) {
-    wuffs_base__pixel_format src_pixfmt =
-        wuffs_base__pixel_config__pixel_format(&ic.pixcfg);
-    uint32_t n_color = wuffs_base__pixel_format__coloration(&src_pixfmt);
-    uint32_t n_alpha = wuffs_base__pixel_format__transparency(&src_pixfmt) !=
-                       WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__OPAQUE;
-    *channels_in_file = (int)(n_color + n_alpha);
+    *channels_in_file = wuffs_drop_in__stb__channel_count(
+        wuffs_base__pixel_config__pixel_format(&ic.pixcfg));
   }
 
   return ret;

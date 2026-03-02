@@ -7839,6 +7839,10 @@ wuffs_base__pixel_swizzler__prepare(wuffs_base__pixel_swizzler* p,
     case WUFFS_BASE__PIXEL_FORMAT__Y:
       break;
 #endif
+#if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_YA_NONPREMUL)
+    case WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL:
+      break;
+#endif
 #if defined(WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_BGR_565)
     case WUFFS_BASE__PIXEL_FORMAT__BGR_565:
       break;

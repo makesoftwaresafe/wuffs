@@ -152,10 +152,15 @@ for a C compiler $CC, such as clang or gcc.
 //
 // If using the wuffs_aux C++ API, without overriding the SelectPixfmt method,
 // the implicit destination pixel format is BGRA_PREMUL.
+//
+// ----
+//
+// This program uses the STB API, not the wuffs_aux C++ API. We only ever pass
+// 1 (STBI_grey) or 3 (STBI_rgb), not 0, 2 or 4, as the desired_channels
+// argument to stbi_load_etc functions, so we only need ALLOW_Y and ALLOW_RGB.
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ENABLE_ALLOWLIST
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_Y
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_RGB
-#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_RGBA_NONPREMUL
 
 // Defining this enables Wuffs' reimplementation of the STB library's API.
 #define WUFFS_CONFIG__ENABLE_DROP_IN_REPLACEMENT__STB
