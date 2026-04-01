@@ -38,12 +38,12 @@ of running in a very restrictive sandbox (Linux's SECCOMP_MODE_STRICT).
 See example/convert-to-nia and example/imageviewer in the Wuffs repository for
 examples of using its C and C++ APIs.
 
-Coming back to this program, pass the -demo flag to decode four versions of the
-same image of the Mona Lisa, in Thumbhash, PKM/ETC2, JPEG and PNG formats. Only
-the last one is lossless.
+Coming back to this program, pass the -demo flag to decode five versions of the
+same image of the Mona Lisa, in Thumbhash, Handsum, PKM/ETC2, JPEG and PNG
+formats. Only the last one is lossless.
 
 As of September 2024, the actual STB Image implementation only decodes two out
-of four: JPEG and PNG. Wuffs' reimplementation decodes all four demo images.
+of five: JPEG and PNG. Wuffs' reimplementation decodes all five demo images.
 
 Define the DECODE_ONLY_JPEG macro to limit the variety of image file formats
 that Wuffs decodes to just JPEG, for smaller binaries and faster compiles.
