@@ -50863,7 +50863,7 @@ wuffs_handsum__decoder__do_decode_image_config(
       uint32_t t_1 = *iop_a_src++;
       v_c32 = t_1;
     }
-    if ((v_c32 & 192u) != 0u) {
+    if ((v_c32 & 192u) != 64u) {
       status = wuffs_base__make_status(wuffs_handsum__error__unsupported_handsum_file);
       goto exit;
     }

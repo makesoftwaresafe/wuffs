@@ -111,7 +111,7 @@ func Encode(w io.Writer, src image.Image, options *EncodeOptions) error {
 	buf := [FileSize]byte{}
 	buf[0] = Magic[0]
 	buf[1] = Magic[1]
-	buf[2] = aspectRatio
+	buf[2] = aspectRatio | 0x40
 
 	bitOffset := 3 * 8
 	for i := range dstI16s {
@@ -192,7 +192,7 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 		return image.Config{}, err
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return image.Config{}, ErrNotAHandsumFile
-	} else if (buf[2] & 0xC0) != 0 {
+	} else if (buf[2] & 0xC0) != 0x40 {
 		return image.Config{}, ErrUnsupportedFileVersion
 	}
 
@@ -211,7 +211,7 @@ func Decode(r io.Reader) (image.Image, error) {
 		return nil, err
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return nil, ErrNotAHandsumFile
-	} else if (buf[2] & 0xC0) != 0 {
+	} else if (buf[2] & 0xC0) != 0x40 {
 		return nil, ErrUnsupportedFileVersion
 	}
 

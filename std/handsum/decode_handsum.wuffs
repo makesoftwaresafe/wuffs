@@ -82,7 +82,7 @@ pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.
         return "#bad header"
     }
     c32 = args.src.read_u8_as_u32?()
-    if (c32 & 0xC0) <> 0x00 {
+    if (c32 & 0xC0) <> 0x40 {
         return "#unsupported Handsum file"
     }
 
