@@ -10485,7 +10485,6 @@ struct wuffs_gzip__decoder__struct {
 
 extern const char wuffs_handsum__error__bad_header[];
 extern const char wuffs_handsum__error__truncated_input[];
-extern const char wuffs_handsum__error__unsupported_handsum_file[];
 
 // ---------------- Public Consts
 
@@ -10656,6 +10655,7 @@ struct wuffs_handsum__decoder__struct {
 
     uint32_t f_width;
     uint32_t f_height;
+    uint32_t f_variant;
     uint8_t f_call_sequence;
     uint16_t f_bit_offset;
     uint16_t f_coeffs[40];
@@ -10670,7 +10670,7 @@ struct wuffs_handsum__decoder__struct {
   } private_impl;
 
   struct {
-    uint8_t f_bits[64];
+    uint8_t f_bits[256];
     uint8_t f_buffers[2][32][128];
 
     struct {
@@ -50313,9 +50313,13 @@ wuffs_gzip__decoder__do_transform_io(
 
 const char wuffs_handsum__error__bad_header[] = "#handsum: bad header";
 const char wuffs_handsum__error__truncated_input[] = "#handsum: truncated input";
-const char wuffs_handsum__error__unsupported_handsum_file[] = "#handsum: unsupported Handsum file";
 
 // ---------------- Private Consts
+
+static const uint32_t
+WUFFS_HANDSUM__PAYLOAD_SIZES[4] WUFFS_BASE__POTENTIALLY_UNUSED = {
+  30u, 45u, 96u, 144u,
+};
 
 static const uint8_t
 WUFFS_HANDSUM__CLAMP_7[32] WUFFS_BASE__POTENTIALLY_UNUSED = {
@@ -50528,7 +50532,7 @@ wuffs_handsum__decoder__do_decode_frame(
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__decode_block(
+wuffs_handsum__decoder__decode_pblock(
     wuffs_handsum__decoder* self,
     uint32_t a_which,
     uint32_t a_y_offset,
@@ -50536,7 +50540,15 @@ wuffs_handsum__decoder__decode_block(
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__decode_coeffs(
+wuffs_handsum__decoder__decode_xblock(
+    wuffs_handsum__decoder* self,
+    uint32_t a_which,
+    uint32_t a_y_offset,
+    uint32_t a_x_offset);
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__decode_xcoeffs(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
@@ -50546,27 +50558,38 @@ wuffs_handsum__decoder__smooth_luma_block_seams(
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__upsample_chroma(
+wuffs_handsum__decoder__upsample_8_to_16_chroma(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__upsample_bgr(
+wuffs_handsum__decoder__upsample_16_to_32_bgr(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__convert_ycc_to_bgr(
+wuffs_handsum__decoder__convert_32_bgr_to_y(
+    wuffs_handsum__decoder* self,
+    uint32_t a_which);
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__convert_16_y_to_bgr(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__scale_1d_horizontal(
+wuffs_handsum__decoder__convert_16_ycc_to_bgr(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__scale_1d_vertical(
+wuffs_handsum__decoder__scale_32_horizontal(
+    wuffs_handsum__decoder* self);
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__scale_32_vertical(
     wuffs_handsum__decoder* self);
 
 WUFFS_BASE__GENERATED_C_CODE
@@ -50801,6 +50824,7 @@ wuffs_handsum__decoder__do_decode_image_config(
   wuffs_base__status status = wuffs_base__make_status(NULL);
 
   uint32_t v_c32 = 0;
+  uint32_t v_pixfmt = 0;
 
   const uint8_t* iop_a_src = NULL;
   const uint8_t* io0_a_src WUFFS_BASE__POTENTIALLY_UNUSED = NULL;
@@ -50863,10 +50887,7 @@ wuffs_handsum__decoder__do_decode_image_config(
       uint32_t t_1 = *iop_a_src++;
       v_c32 = t_1;
     }
-    if ((v_c32 & 192u) != 64u) {
-      status = wuffs_base__make_status(wuffs_handsum__error__unsupported_handsum_file);
-      goto exit;
-    }
+    self->private_impl.f_variant = (v_c32 >> 6u);
     if ((v_c32 & 32u) == 0u) {
       self->private_impl.f_width = 32u;
       self->private_impl.f_height = ((v_c32 & 31u) + 1u);
@@ -50875,9 +50896,13 @@ wuffs_handsum__decoder__do_decode_image_config(
       self->private_impl.f_height = 32u;
     }
     if (a_dst != NULL) {
+      v_pixfmt = 536870920u;
+      if ((self->private_impl.f_variant & 1u) != 0u) {
+        v_pixfmt = 2415954056u;
+      }
       wuffs_base__image_config__set(
           a_dst,
-          2415954056u,
+          v_pixfmt,
           0u,
           self->private_impl.f_width,
           self->private_impl.f_height,
@@ -51145,6 +51170,7 @@ wuffs_handsum__decoder__do_decode_frame(
     wuffs_base__decode_frame_options* a_opts) {
   wuffs_base__status status = wuffs_base__make_status(NULL);
 
+  uint32_t v_pixfmt = 0;
   wuffs_base__status v_status = wuffs_base__make_status(NULL);
   uint32_t v_num_read = 0;
   uint32_t v_which = 0;
@@ -51184,10 +51210,14 @@ wuffs_handsum__decoder__do_decode_frame(
       status = wuffs_base__make_status(wuffs_base__note__end_of_data);
       goto ok;
     }
+    v_pixfmt = 536870920u;
+    if ((self->private_impl.f_variant & 1u) != 0u) {
+      v_pixfmt = 2415954056u;
+    }
     v_status = wuffs_base__pixel_swizzler__prepare(&self->private_impl.f_swizzler,
         wuffs_base__pixel_buffer__pixel_format(a_dst),
         wuffs_base__pixel_buffer__palette(a_dst),
-        wuffs_base__utility__make_pixel_format(2415954056u),
+        wuffs_base__utility__make_pixel_format(v_pixfmt),
         wuffs_base__utility__empty_slice_u8(),
         a_blend);
     if ( ! wuffs_base__status__is_ok(&v_status)) {
@@ -51200,32 +51230,52 @@ wuffs_handsum__decoder__do_decode_frame(
       }
       goto ok;
     }
-    while (v_num_read < 45u) {
+    while (v_num_read < WUFFS_HANDSUM__PAYLOAD_SIZES[self->private_impl.f_variant]) {
       v_num_read += wuffs_private_impl__io_reader__limited_copy_u32_to_slice(
-          &iop_a_src, io2_a_src,(45u - v_num_read), wuffs_base__make_slice_u8_ij(self->private_data.f_bits, v_num_read, 64));
-      if (v_num_read < 45u) {
+          &iop_a_src, io2_a_src,(WUFFS_HANDSUM__PAYLOAD_SIZES[self->private_impl.f_variant] - v_num_read), wuffs_base__make_slice_u8_ij(self->private_data.f_bits, v_num_read, 256));
+      if (v_num_read < WUFFS_HANDSUM__PAYLOAD_SIZES[self->private_impl.f_variant]) {
         status = wuffs_base__make_status(wuffs_base__suspension__short_read);
         WUFFS_BASE__COROUTINE_SUSPENSION_POINT_MAYBE_SUSPEND(2);
       }
     }
     self->private_impl.f_bit_offset = 0u;
-    wuffs_handsum__decoder__decode_block(self, 0u, 0u, 0u);
-    wuffs_handsum__decoder__decode_block(self, 0u, 0u, 32u);
-    wuffs_handsum__decoder__decode_block(self, 0u, 8u, 0u);
-    wuffs_handsum__decoder__decode_block(self, 0u, 8u, 32u);
-    wuffs_handsum__decoder__decode_block(self, 1u, 0u, 1u);
-    wuffs_handsum__decoder__decode_block(self, 1u, 0u, 2u);
+    if (self->private_impl.f_variant < 2u) {
+      wuffs_handsum__decoder__decode_xblock(self, 0u, 0u, 0u);
+      wuffs_handsum__decoder__decode_xblock(self, 0u, 0u, 32u);
+      wuffs_handsum__decoder__decode_xblock(self, 0u, 8u, 0u);
+      wuffs_handsum__decoder__decode_xblock(self, 0u, 8u, 32u);
+      if (self->private_impl.f_variant == 1u) {
+        wuffs_handsum__decoder__decode_xblock(self, 1u, 0u, 1u);
+        wuffs_handsum__decoder__decode_xblock(self, 1u, 0u, 2u);
+      }
+    } else {
+      wuffs_handsum__decoder__decode_pblock(self, 0u, 0u, 0u);
+      wuffs_handsum__decoder__decode_pblock(self, 0u, 0u, 32u);
+      wuffs_handsum__decoder__decode_pblock(self, 0u, 8u, 0u);
+      wuffs_handsum__decoder__decode_pblock(self, 0u, 8u, 32u);
+      if (self->private_impl.f_variant == 3u) {
+        wuffs_handsum__decoder__decode_pblock(self, 1u, 0u, 1u);
+        wuffs_handsum__decoder__decode_pblock(self, 1u, 0u, 2u);
+      }
+    }
     wuffs_handsum__decoder__smooth_luma_block_seams(self);
-    wuffs_handsum__decoder__upsample_chroma(self);
-    wuffs_handsum__decoder__convert_ycc_to_bgr(self);
-    wuffs_handsum__decoder__upsample_bgr(self);
+    if ((self->private_impl.f_variant & 1u) == 0u) {
+      wuffs_handsum__decoder__convert_16_y_to_bgr(self);
+    } else {
+      wuffs_handsum__decoder__upsample_8_to_16_chroma(self);
+      wuffs_handsum__decoder__convert_16_ycc_to_bgr(self);
+    }
+    wuffs_handsum__decoder__upsample_16_to_32_bgr(self);
     v_which = 1u;
     if (self->private_impl.f_width < 32u) {
       v_which = 0u;
-      wuffs_handsum__decoder__scale_1d_horizontal(self);
+      wuffs_handsum__decoder__scale_32_horizontal(self);
     } else if (self->private_impl.f_height < 32u) {
       v_which = 0u;
-      wuffs_handsum__decoder__scale_1d_vertical(self);
+      wuffs_handsum__decoder__scale_32_vertical(self);
+    }
+    if ((self->private_impl.f_variant & 1u) == 0u) {
+      wuffs_handsum__decoder__convert_32_bgr_to_y(self, v_which);
     }
     v_status = wuffs_handsum__decoder__from_pixels_to_dst(self, a_dst, v_which);
     if ( ! wuffs_base__status__is_ok(&v_status)) {
@@ -51259,11 +51309,64 @@ wuffs_handsum__decoder__do_decode_frame(
   return status;
 }
 
-// -------- func handsum.decoder.decode_block
+// -------- func handsum.decoder.decode_pblock
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__decode_block(
+wuffs_handsum__decoder__decode_pblock(
+    wuffs_handsum__decoder* self,
+    uint32_t a_which,
+    uint32_t a_y_offset,
+    uint32_t a_x_offset) {
+  uint32_t v_bo = 0;
+  uint32_t v_y = 0;
+  uint32_t v_x = 0;
+  uint32_t v_sw = 0;
+  uint32_t v_sx = 0;
+  uint32_t v_sy = 0;
+  uint8_t v_v00 = 0;
+  uint8_t v_v01 = 0;
+  uint8_t v_v10 = 0;
+  uint8_t v_v11 = 0;
+
+  v_bo = ((uint32_t)(self->private_impl.f_bit_offset));
+  v_y = 0u;
+  while (v_y < 8u) {
+    v_x = 0u;
+    while (v_x < 8u) {
+      v_sw = ((uint32_t)(((uint32_t)(((uint32_t)(((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 255u)] >> (v_bo & 4u))) & 15u)))) * 17u)) - 128u));
+      v_bo += 4u;
+      v_sx = ((uint32_t)(((uint32_t)(((uint32_t)(((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 255u)] >> (v_bo & 4u))) & 15u)))) * 8u)) - 64u));
+      v_bo += 4u;
+      v_sy = ((uint32_t)(((uint32_t)(((uint32_t)(((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 255u)] >> (v_bo & 4u))) & 15u)))) * 8u)) - 64u));
+      v_bo += 4u;
+      v_v00 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_sw - v_sy)) - v_sx)) & 1023u)];
+      v_v01 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_sw - v_sy)) + v_sx)) & 1023u)];
+      v_v10 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_sw + v_sy)) - v_sx)) & 1023u)];
+      v_v11 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_sw + v_sy)) + v_sx)) & 1023u)];
+      if (a_which != 0u) {
+        v_v00 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_v00)) - 136u)) & 1023u)];
+        v_v01 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_v01)) - 136u)) & 1023u)];
+        v_v10 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_v10)) - 136u)) & 1023u)];
+        v_v11 = WUFFS_HANDSUM__BIAS_AND_CLAMP[(((uint32_t)(((uint32_t)(v_v11)) - 136u)) & 1023u)];
+      }
+      self->private_data.f_buffers[a_which][(a_y_offset + v_y + 0u)][(a_x_offset + (4u * v_x) + 0u)] = v_v00;
+      self->private_data.f_buffers[a_which][(a_y_offset + v_y + 0u)][(a_x_offset + (4u * v_x) + 4u)] = v_v01;
+      self->private_data.f_buffers[a_which][(a_y_offset + v_y + 1u)][(a_x_offset + (4u * v_x) + 0u)] = v_v10;
+      self->private_data.f_buffers[a_which][(a_y_offset + v_y + 1u)][(a_x_offset + (4u * v_x) + 4u)] = v_v11;
+      v_x += 2u;
+    }
+    v_y += 2u;
+  }
+  self->private_impl.f_bit_offset = ((uint16_t)(v_bo));
+  return wuffs_base__make_empty_struct();
+}
+
+// -------- func handsum.decoder.decode_xblock
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__decode_xblock(
     wuffs_handsum__decoder* self,
     uint32_t a_which,
     uint32_t a_y_offset,
@@ -51280,7 +51383,7 @@ wuffs_handsum__decoder__decode_block(
   uint64_t v_c_16 = 0;
   uint64_t v_result_0 = 0;
 
-  wuffs_handsum__decoder__decode_coeffs(self);
+  wuffs_handsum__decoder__decode_xcoeffs(self);
   v_y = 0u;
   while (v_y < 8u) {
     v_x = 0u;
@@ -51315,23 +51418,23 @@ wuffs_handsum__decoder__decode_block(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.decode_coeffs
+// -------- func handsum.decoder.decode_xcoeffs
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__decode_coeffs(
+wuffs_handsum__decoder__decode_xcoeffs(
     wuffs_handsum__decoder* self) {
   uint32_t v_bo = 0;
   uint8_t v_nibble = 0;
   uint32_t v_i = 0;
 
   v_bo = ((uint32_t)(self->private_impl.f_bit_offset));
-  v_nibble = ((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 63u)] >> (v_bo & 4u))) & 15u));
+  v_nibble = ((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 255u)] >> (v_bo & 4u))) & 15u));
   self->private_impl.f_coeffs[0u] = ((uint16_t)(((uint16_t)(((uint16_t)(v_nibble)) - 8u)) * 128u));
   v_bo += 4u;
   v_i = 1u;
   while (v_i < 15u) {
-    v_nibble = ((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 63u)] >> (v_bo & 4u))) & 15u));
+    v_nibble = ((uint8_t)(((uint8_t)(self->private_data.f_bits[((v_bo >> 3u) & 255u)] >> (v_bo & 4u))) & 15u));
     self->private_impl.f_coeffs[WUFFS_HANDSUM__ZIGZAG[v_i]] = ((uint16_t)(((uint16_t)(((uint16_t)(v_nibble)) - 8u)) * 16u));
     v_bo += 4u;
     v_i += 1u;
@@ -51413,11 +51516,11 @@ wuffs_handsum__decoder__smooth_luma_block_seams(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.upsample_chroma
+// -------- func handsum.decoder.upsample_8_to_16_chroma
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__upsample_chroma(
+wuffs_handsum__decoder__upsample_8_to_16_chroma(
     wuffs_handsum__decoder* self) {
   uint32_t v_y = 0;
   uint32_t v_dy = 0;
@@ -51455,11 +51558,11 @@ wuffs_handsum__decoder__upsample_chroma(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.upsample_bgr
+// -------- func handsum.decoder.upsample_16_to_32_bgr
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__upsample_bgr(
+wuffs_handsum__decoder__upsample_16_to_32_bgr(
     wuffs_handsum__decoder* self) {
   uint32_t v_y = 0;
   uint32_t v_dy = 0;
@@ -51503,11 +51606,57 @@ wuffs_handsum__decoder__upsample_bgr(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.convert_ycc_to_bgr
+// -------- func handsum.decoder.convert_32_bgr_to_y
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__convert_ycc_to_bgr(
+wuffs_handsum__decoder__convert_32_bgr_to_y(
+    wuffs_handsum__decoder* self,
+    uint32_t a_which) {
+  uint32_t v_y = 0;
+  uint32_t v_x = 0;
+
+  v_y = 0u;
+  while (v_y < 32u) {
+    v_x = 1u;
+    while (v_x < 32u) {
+      self->private_data.f_buffers[a_which][v_y][v_x] = self->private_data.f_buffers[a_which][v_y][(4u * v_x)];
+      v_x += 1u;
+    }
+    v_y += 1u;
+  }
+  return wuffs_base__make_empty_struct();
+}
+
+// -------- func handsum.decoder.convert_16_y_to_bgr
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__convert_16_y_to_bgr(
+    wuffs_handsum__decoder* self) {
+  uint32_t v_y = 0;
+  uint32_t v_x = 0;
+  uint8_t v_gray = 0;
+
+  v_y = 0u;
+  while (v_y < 16u) {
+    v_x = 0u;
+    while (v_x < 16u) {
+      v_gray = self->private_data.f_buffers[0u][v_y][((4u * v_x) + 0u)];
+      self->private_data.f_buffers[0u][v_y][((4u * v_x) + 1u)] = v_gray;
+      self->private_data.f_buffers[0u][v_y][((4u * v_x) + 2u)] = v_gray;
+      v_x += 1u;
+    }
+    v_y += 1u;
+  }
+  return wuffs_base__make_empty_struct();
+}
+
+// -------- func handsum.decoder.convert_16_ycc_to_bgr
+
+WUFFS_BASE__GENERATED_C_CODE
+static wuffs_base__empty_struct
+wuffs_handsum__decoder__convert_16_ycc_to_bgr(
     wuffs_handsum__decoder* self) {
   uint32_t v_y = 0;
   uint32_t v_x = 0;
@@ -51553,11 +51702,11 @@ wuffs_handsum__decoder__convert_ycc_to_bgr(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.scale_1d_horizontal
+// -------- func handsum.decoder.scale_32_horizontal
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__scale_1d_horizontal(
+wuffs_handsum__decoder__scale_32_horizontal(
     wuffs_handsum__decoder* self) {
   uint32_t v_y = 0;
   uint32_t v_dstx = 0;
@@ -51610,11 +51759,11 @@ wuffs_handsum__decoder__scale_1d_horizontal(
   return wuffs_base__make_empty_struct();
 }
 
-// -------- func handsum.decoder.scale_1d_vertical
+// -------- func handsum.decoder.scale_32_vertical
 
 WUFFS_BASE__GENERATED_C_CODE
 static wuffs_base__empty_struct
-wuffs_handsum__decoder__scale_1d_vertical(
+wuffs_handsum__decoder__scale_32_vertical(
     wuffs_handsum__decoder* self) {
   uint32_t v_x = 0;
   uint32_t v_dsty = 0;
@@ -51682,6 +51831,7 @@ wuffs_handsum__decoder__from_pixels_to_dst(
   wuffs_base__table_u8 v_tab = {0};
   uint32_t v_y = 0;
   wuffs_base__slice_u8 v_dst = {0};
+  uint32_t v_src_bytes_per_pixel = 0;
   wuffs_base__slice_u8 v_src = {0};
 
   v_dst_pixfmt = wuffs_base__pixel_buffer__pixel_format(a_dst);
@@ -51692,8 +51842,12 @@ wuffs_handsum__decoder__from_pixels_to_dst(
   v_dst_bytes_per_pixel = (v_dst_bits_per_pixel / 8u);
   v_dst_bytes_per_row = ((uint64_t)((self->private_impl.f_width * v_dst_bytes_per_pixel)));
   v_tab = wuffs_base__pixel_buffer__plane(a_dst, 0u);
+  v_src_bytes_per_pixel = 1u;
+  if ((self->private_impl.f_variant & 1u) != 0u) {
+    v_src_bytes_per_pixel = 4u;
+  }
   while (v_y < self->private_impl.f_height) {
-    v_src = wuffs_base__make_slice_u8(self->private_data.f_buffers[a_which][v_y], (self->private_impl.f_width * 4u));
+    v_src = wuffs_base__make_slice_u8(self->private_data.f_buffers[a_which][v_y], (self->private_impl.f_width * v_src_bytes_per_pixel));
     v_dst = wuffs_private_impl__table_u8__row_u32(v_tab, v_y);
     if (v_dst_bytes_per_row < ((uint64_t)(v_dst.len))) {
       v_dst = wuffs_base__slice_u8__subslice_j(v_dst, v_dst_bytes_per_row);

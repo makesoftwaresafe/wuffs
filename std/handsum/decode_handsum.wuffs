@@ -10,30 +10,19 @@
 
 // --------
 
-// Handsum is a very lossy format for very small thumbnails. Very small in
-// terms of image dimensions, up to 32×32 pixels, but also in terms of file
-// size. Every Handsum image file is exactly 48 bytes (384 bits) long. This can
-// imply using as little as 0.046875 bytes (0.375 bits) per pixel.
+// Handsum is a very lossy format for very small thumbnails.
 //
-// Each Handsum image is essentially a scaled 16×16 pixel YCbCr 4:2:0 JPEG MCU
-// (Minimum Coded Unit; 4 Luma and 2 Chroma blocks), keeping only the 15 lowest
-// frequency DCT (Discrete Cosine Transform) coefficients. Each of the (6 × 15)
-// = 90 coefficients are encoded as one nibble (4 bits) with fixed quantization
-// factors, totalling 45 bytes. The initial 3 bytes holds a 16-bit magic
-// signature, 2-bit version number and 6-bit aspect ratio.
-//
-// As of February 2025, the latest version is Version 0. All Version 0 files
-// use the sRGB color profile.
+// See the lib/handsum Go implementation for more about the file format.
 
 pub status "#bad header"
 pub status "#truncated input"
-pub status "#unsupported Handsum file"
 
 pub const DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE : base.u64 = 0
 
 pub struct decoder? implements base.image_decoder(
-        width  : base.u32[..= 32],
-        height : base.u32[..= 32],
+        width   : base.u32[..= 32],
+        height  : base.u32[..= 32],
+        variant : base.u32[..= 3],
 
         // The call sequence state machine is discussed in
         // (/doc/std/image-decoders-call-sequence.md).
@@ -46,7 +35,7 @@ pub struct decoder? implements base.image_decoder(
         swizzler : base.pixel_swizzler,
         util     : base.utility,
 ) + (
-        bits    : array[64] base.u8,
+        bits    : array[256] base.u8,
         buffers : array[2] array[32] array[128] base.u8,
 )
 
@@ -71,7 +60,8 @@ pub func decoder.decode_image_config?(dst: nptr base.image_config, src: base.io_
 }
 
 pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.io_reader) {
-    var c32 : base.u32
+    var c32    : base.u32
+    var pixfmt : base.u32
 
     if this.call_sequence <> 0x00 {
         return base."#bad call sequence"
@@ -82,9 +72,7 @@ pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.
         return "#bad header"
     }
     c32 = args.src.read_u8_as_u32?()
-    if (c32 & 0xC0) <> 0x40 {
-        return "#unsupported Handsum file"
-    }
+    this.variant = c32 >> 6
 
     if (c32 & 0x20) == 0x00 {  // Landscape.
         this.width = 32
@@ -95,8 +83,13 @@ pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.
     }
 
     if args.dst <> nullptr {
+        pixfmt = base.PIXEL_FORMAT__Y
+        if (this.variant & 1) <> 0 {
+            pixfmt = base.PIXEL_FORMAT__BGRX
+        }
+
         args.dst.set!(
-                pixfmt: base.PIXEL_FORMAT__BGRX,
+                pixfmt: pixfmt,
                 pixsub: 0,
                 width: this.width,
                 height: this.height,
@@ -166,6 +159,7 @@ pub func decoder.decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reader, 
 }
 
 pri func decoder.do_decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reader, blend: base.pixel_blend, workbuf: slice base.u8, opts: nptr base.decode_frame_options) {
+    var pixfmt   : base.u32
     var status   : base.status
     var num_read : base.u32
     var which    : base.u32[..= 1]
@@ -178,44 +172,75 @@ pri func decoder.do_decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reade
         return base."@end of data"
     }
 
+    pixfmt = base.PIXEL_FORMAT__Y
+    if (this.variant & 1) <> 0 {
+        pixfmt = base.PIXEL_FORMAT__BGRX
+    }
+
     status = this.swizzler.prepare!(
             dst_pixfmt: args.dst.pixel_format(),
             dst_palette: args.dst.palette(),
-            src_pixfmt: this.util.make_pixel_format(repr: base.PIXEL_FORMAT__BGRX),
+            src_pixfmt: this.util.make_pixel_format(repr: pixfmt),
             src_palette: this.util.empty_slice_u8(),
             blend: args.blend)
     if not status.is_ok() {
         return status
     }
 
-    while num_read < 45 {
+    while num_read < PAYLOAD_SIZES[this.variant] {
+        assert num_read < 256 via "a < b: a < c; c <= b"(c: PAYLOAD_SIZES[this.variant])
+        assert PAYLOAD_SIZES[this.variant] > num_read via "a > b: b < a"()
         num_read ~mod+= args.src.limited_copy_u32_to_slice!(
-                up_to: 45 - num_read,
+                up_to: PAYLOAD_SIZES[this.variant] - num_read,
                 s: this.bits[num_read ..])
-        if num_read < 45 {
+        if num_read < PAYLOAD_SIZES[this.variant] {
             yield? base."$short read"
         }
     }
 
     this.bit_offset = 0
-    this.decode_block!(which: 0, y_offset: 0, x_offset: 4 * 0)
-    this.decode_block!(which: 0, y_offset: 0, x_offset: 4 * 8)
-    this.decode_block!(which: 0, y_offset: 8, x_offset: 4 * 0)
-    this.decode_block!(which: 0, y_offset: 8, x_offset: 4 * 8)
-    this.decode_block!(which: 1, y_offset: 0, x_offset: 1)
-    this.decode_block!(which: 1, y_offset: 0, x_offset: 2)
+    if this.variant < 2 {
+        this.decode_xblock!(which: 0, y_offset: 0, x_offset: 4 * 0)
+        this.decode_xblock!(which: 0, y_offset: 0, x_offset: 4 * 8)
+        this.decode_xblock!(which: 0, y_offset: 8, x_offset: 4 * 0)
+        this.decode_xblock!(which: 0, y_offset: 8, x_offset: 4 * 8)
+        if this.variant == 1 {
+            this.decode_xblock!(which: 1, y_offset: 0, x_offset: 1)
+            this.decode_xblock!(which: 1, y_offset: 0, x_offset: 2)
+        }
+    } else {
+        this.decode_pblock!(which: 0, y_offset: 0, x_offset: 4 * 0)
+        this.decode_pblock!(which: 0, y_offset: 0, x_offset: 4 * 8)
+        this.decode_pblock!(which: 0, y_offset: 8, x_offset: 4 * 0)
+        this.decode_pblock!(which: 0, y_offset: 8, x_offset: 4 * 8)
+        if this.variant == 3 {
+            this.decode_pblock!(which: 1, y_offset: 0, x_offset: 1)
+            this.decode_pblock!(which: 1, y_offset: 0, x_offset: 2)
+        }
+    }
+
     this.smooth_luma_block_seams!()
-    this.upsample_chroma!()
-    this.convert_ycc_to_bgr!()
-    this.upsample_bgr!()
+
+    if (this.variant & 1) == 0 {
+        this.convert_16_y_to_bgr!()
+    } else {
+        this.upsample_8_to_16_chroma!()
+        this.convert_16_ycc_to_bgr!()
+    }
+
+    this.upsample_16_to_32_bgr!()
 
     which = 1
     if this.width < 32 {
         which = 0
-        this.scale_1d_horizontal!()
+        this.scale_32_horizontal!()
     } else if this.height < 32 {
         which = 0
-        this.scale_1d_vertical!()
+        this.scale_32_vertical!()
+    }
+
+    if (this.variant & 1) == 0 {
+        this.convert_32_bgr_to_y!(which: which)
     }
 
     status = this.from_pixels_to_dst!(dst: args.dst, which: which)
@@ -226,11 +251,71 @@ pri func decoder.do_decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reade
     this.call_sequence = 0x60
 }
 
-// decode_block calls decode_coeffs and then performs an Inverse Discrete
+pri func decoder.decode_pblock!(which: base.u32[..= 1], y_offset: base.u32[..= 8], x_offset: base.u32[..= 32]) {
+    var bo : base.u32
+
+    var y : base.u32
+    var x : base.u32
+
+    var sw : base.u32
+    var sx : base.u32
+    var sy : base.u32
+
+    var v00 : base.u8
+    var v01 : base.u8
+    var v10 : base.u8
+    var v11 : base.u8
+
+    bo = this.bit_offset as base.u32
+
+    y = 0
+    while y < 8 {
+        x = 0
+        while x < 8,
+                inv y < 8,
+        {
+            // sw, sx and sy are scaled-and-biased versions of lib/handsum's
+            // ew, ex and ey.
+            //
+            // sw's "~mod- 0x80" is because BIAS_AND_CLAMP[0] is 0x80.
+            sw = ((((this.bits[(bo >> 3) & 255] >> (bo & 4)) & 15) as base.u32) ~mod* 0x11) ~mod- 0x80
+            bo ~mod+= 4
+            sx = ((((this.bits[(bo >> 3) & 255] >> (bo & 4)) & 15) as base.u32) ~mod* 0x08) ~mod- 0x40
+            bo ~mod+= 4
+            sy = ((((this.bits[(bo >> 3) & 255] >> (bo & 4)) & 15) as base.u32) ~mod* 0x08) ~mod- 0x40
+            bo ~mod+= 4
+
+            v00 = BIAS_AND_CLAMP[((sw ~mod- sy) ~mod- sx) & 1023]
+            v01 = BIAS_AND_CLAMP[((sw ~mod- sy) ~mod+ sx) & 1023]
+            v10 = BIAS_AND_CLAMP[((sw ~mod+ sy) ~mod- sx) & 1023]
+            v11 = BIAS_AND_CLAMP[((sw ~mod+ sy) ~mod+ sx) & 1023]
+
+            if args.which <> 0 {
+                // This does what lib/handsum calls biasDown.
+                v00 = BIAS_AND_CLAMP[((v00 as base.u32) ~mod- 0x88) & 1023]
+                v01 = BIAS_AND_CLAMP[((v01 as base.u32) ~mod- 0x88) & 1023]
+                v10 = BIAS_AND_CLAMP[((v10 as base.u32) ~mod- 0x88) & 1023]
+                v11 = BIAS_AND_CLAMP[((v11 as base.u32) ~mod- 0x88) & 1023]
+            }
+
+            this.buffers[args.which][args.y_offset + y + 0][args.x_offset + (4 * x) + 0] = v00
+            this.buffers[args.which][args.y_offset + y + 0][args.x_offset + (4 * x) + 4] = v01
+            this.buffers[args.which][args.y_offset + y + 1][args.x_offset + (4 * x) + 0] = v10
+            this.buffers[args.which][args.y_offset + y + 1][args.x_offset + (4 * x) + 4] = v11
+
+            x += 2
+        }
+        y += 2
+    }
+
+    this.bit_offset = (bo & 0xFFFF) as base.u16
+}
+
+// decode_xblock calls decode_xcoeffs and then performs an Inverse Discrete
 // Cosine Transform. The IDCT algorithm is equivalent to the lowleveljpeg Go
 // package's BlockU8.InverseDCTFrom code, although Handsum only needs to go up
 // to (5, 5) in DCT space, instead of (8, 8).
-pri func decoder.decode_block!(which: base.u32[..= 1], y_offset: base.u32[..= 8], x_offset: base.u32[..= 32]) {
+pri func decoder.decode_xblock!(which: base.u32[..= 1], y_offset: base.u32[..= 8], x_offset: base.u32[..= 32]) {
     var y : base.u32
     var x : base.u32
     var v : base.u32
@@ -244,7 +329,7 @@ pri func decoder.decode_block!(which: base.u32[..= 1], y_offset: base.u32[..= 8]
     var c_16            : base.u64
     var result_0        : base.u64
 
-    this.decode_coeffs!()
+    this.decode_xcoeffs!()
 
     y = 0
     while y < 8 {
@@ -308,20 +393,20 @@ pri func decoder.decode_block!(which: base.u32[..= 1], y_offset: base.u32[..= 8]
     }
 }
 
-pri func decoder.decode_coeffs!() {
+pri func decoder.decode_xcoeffs!() {
     var bo     : base.u32
     var nibble : base.u8[..= 15]
     var i      : base.u32
 
     bo = this.bit_offset as base.u32
 
-    nibble = (this.bits[(bo >> 3) & 63] >> (bo & 4)) & 15
+    nibble = (this.bits[(bo >> 3) & 255] >> (bo & 4)) & 15
     this.coeffs[0] = ((nibble as base.u16) ~mod- 8) ~mod* 128
     bo ~mod+= 4
 
     i = 1
     while i < 15 {
-        nibble = (this.bits[(bo >> 3) & 63] >> (bo & 4)) & 15
+        nibble = (this.bits[(bo >> 3) & 255] >> (bo & 4)) & 15
         this.coeffs[ZIGZAG[i]] = ((nibble as base.u16) ~mod- 8) ~mod* 16
         bo ~mod+= 4
 
@@ -393,7 +478,7 @@ pri func decoder.smooth_luma_block_seams!() {
     this.buffers[0][8][7 * 4] = w87 as base.u8
 }
 
-pri func decoder.upsample_chroma!() {
+pri func decoder.upsample_8_to_16_chroma!() {
     var y  : base.u32
     var dy : base.u32
     var y0 : base.u32[..= 7]
@@ -435,7 +520,7 @@ pri func decoder.upsample_chroma!() {
     }
 }
 
-pri func decoder.upsample_bgr!() {
+pri func decoder.upsample_16_to_32_bgr!() {
     var y  : base.u32
     var dy : base.u32
     var y0 : base.u32[..= 15]
@@ -485,7 +570,46 @@ pri func decoder.upsample_bgr!() {
     }
 }
 
-pri func decoder.convert_ycc_to_bgr!() {
+pri func decoder.convert_32_bgr_to_y!(which: base.u32[..= 1]) {
+    var y : base.u32
+    var x : base.u32
+
+    y = 0
+    while y < 32 {
+        x = 1
+        while x < 32,
+                inv y < 32,
+        {
+            this.buffers[args.which][y][x] = this.buffers[args.which][y][4 * x]
+
+            x += 1
+        }
+        y += 1
+    }
+}
+
+pri func decoder.convert_16_y_to_bgr!() {
+    var y    : base.u32
+    var x    : base.u32
+    var gray : base.u8
+
+    y = 0
+    while y < 16 {
+        x = 0
+        while x < 16,
+                inv y < 16,
+        {
+            gray = this.buffers[0][y][(4 * x) + 0]
+            this.buffers[0][y][(4 * x) + 1] = gray
+            this.buffers[0][y][(4 * x) + 2] = gray
+
+            x += 1
+        }
+        y += 1
+    }
+}
+
+pri func decoder.convert_16_ycc_to_bgr!() {
     var y   : base.u32
     var x   : base.u32
     var yy1 : base.u32
@@ -539,7 +663,7 @@ pri func decoder.convert_ycc_to_bgr!() {
     }
 }
 
-pri func decoder.scale_1d_horizontal!() {
+pri func decoder.scale_32_horizontal!() {
     var y         : base.u32
     var dstx      : base.u32[..= 31]
     var srcx      : base.u32
@@ -601,7 +725,7 @@ pri func decoder.scale_1d_horizontal!() {
     }
 }
 
-pri func decoder.scale_1d_vertical!() {
+pri func decoder.scale_32_vertical!() {
     var x         : base.u32
     var dsty      : base.u32[..= 31]
     var srcy      : base.u32
@@ -671,6 +795,7 @@ pri func decoder.from_pixels_to_dst!(dst: ptr base.pixel_buffer, which: base.u32
     var tab                 : table base.u8
     var y                   : base.u32
     var dst                 : slice base.u8
+    var src_bytes_per_pixel : base.u32[..= 4]
     var src                 : slice base.u8
 
     // TODO: the dst_pixfmt variable shouldn't be necessary. We should be able
@@ -684,9 +809,14 @@ pri func decoder.from_pixels_to_dst!(dst: ptr base.pixel_buffer, which: base.u32
     dst_bytes_per_row = (this.width * dst_bytes_per_pixel) as base.u64
     tab = args.dst.plane(p: 0)
 
+    src_bytes_per_pixel = 1
+    if (this.variant & 1) <> 0 {
+        src_bytes_per_pixel = 4
+    }
+
     while y < this.height {
         assert y < 32 via "a < b: a < c; c <= b"(c: this.height)
-        src = this.buffers[args.which][y][.. this.width * 4]
+        src = this.buffers[args.which][y][.. this.width * src_bytes_per_pixel]
 
         dst = tab.row_u32(y: y)
         if dst_bytes_per_row < dst.length() {
@@ -752,6 +882,10 @@ pub func decoder.tell_me_more?(dst: base.io_writer, minfo: nptr base.more_inform
 pub func decoder.workbuf_len() base.range_ii_u64 {
     return this.util.make_range_ii_u64(min_incl: 0, max_incl: 0)
 }
+
+pri const PAYLOAD_SIZES : roarray[4] base.u32[..= 144] = [
+        30, 45, 96, 144,
+]
 
 pri const CLAMP_7 : roarray[32] base.u8[..= 7] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
