@@ -225,13 +225,13 @@ const uint8_t g_src_ptr__mona_lisa_21_32_th[] = {
 };
 const size_t g_src_len__mona_lisa_21_32_th = 24;
 
-const uint8_t g_src_ptr__mona_lisa_21_32_handsum[] = {
+const uint8_t g_src_ptr__mona_lisa_21_32_hvxc_handsum[] = {
     0xfe, 0xd7, 0x74, 0x17, 0x6f, 0xef, 0x00, 0x08, 0xa9, 0xfb, 0x6a, 0xf0,
     0x1d, 0xff, 0xf0, 0xa0, 0xcb, 0xe2, 0x04, 0x4f, 0xad, 0xfa, 0xfb, 0x0c,
     0x2e, 0x26, 0xf9, 0x8a, 0x6f, 0xac, 0x9f, 0xbf, 0xc8, 0x67, 0x90, 0xc9,
     0x7b, 0x89, 0x77, 0x88, 0x96, 0x6a, 0x75, 0x75, 0x87, 0x87, 0x88, 0xa9,
 };
-const size_t g_src_len__mona_lisa_21_32_handsum = 48;
+const size_t g_src_len__mona_lisa_21_32_hvxc_handsum = 48;
 
 const uint8_t g_src_ptr__mona_lisa_21_32_etc2_pkm[] = {
     0x50, 0x4b, 0x4d, 0x20, 0x32, 0x30, 0x00, 0x01, 0x00, 0x18, 0x00, 0x20,
@@ -1017,9 +1017,9 @@ main(int argc, char** argv) {
           g_src_len__mona_lisa_21_32_th,
       },
       {
-          "«demo»/mona-lisa.21x32.handsum",
-          g_src_ptr__mona_lisa_21_32_handsum,
-          g_src_len__mona_lisa_21_32_handsum,
+          "«demo»/mona-lisa.21x32.hvxc.handsum",
+          g_src_ptr__mona_lisa_21_32_hvxc_handsum,
+          g_src_len__mona_lisa_21_32_hvxc_handsum,
       },
       {
           "«demo»/mona-lisa.21x32.etc2.pkm",

@@ -75,7 +75,7 @@ test_wuffs_handsum_decode_interface() {
                    WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
   return do_test__wuffs_base__image_decoder(
       wuffs_handsum__decoder__upcast_as__wuffs_base__image_decoder(&dec),
-      "test/data/bricks-color.handsum", 0, SIZE_MAX, 32, 24, 0xFF571218);
+      "test/data/bricks-color.hvxc.handsum", 0, SIZE_MAX, 32, 24, 0xFF571218);
 }
 
 const char*  //
@@ -119,7 +119,7 @@ test_wuffs_handsum_decode_frame_config() {
   wuffs_base__io_buffer src = ((wuffs_base__io_buffer){
       .data = g_src_slice_u8,
   });
-  CHECK_STRING(read_file(&src, "test/data/mona-lisa.21x32.handsum"));
+  CHECK_STRING(read_file(&src, "test/data/mona-lisa.21x32.hvxc.handsum"));
 
   CHECK_STATUS("decode_frame_config #0",
                wuffs_handsum__decoder__decode_frame_config(&dec, &fc, &src));
