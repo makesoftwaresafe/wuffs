@@ -14,18 +14,55 @@
 //
 // This is a very lossy format for very small thumbnails. Very small in terms
 // of image dimensions, up to 32×32 pixels, but also in terms of file size.
-// Every Handsum image file is exactly 48 bytes (384 bits) long. This can imply
-// using as little as 0.046875 bytes (0.375 bits) per pixel.
 //
-// Each Handsum image is essentially a scaled 16×16 pixel YCbCr 4:2:0 JPEG MCU
-// (Minimum Coded Unit; 4 Luma and 2 Chroma blocks), keeping only the 15 lowest
-// frequency DCT (Discrete Cosine Transform) coefficients. Each of the (6 × 15)
-// = 90 coefficients are encoded as one nibble (4 bits) with fixed quantization
-// factors, totalling 45 bytes. The initial 3 bytes holds a 16-bit magic
-// signature, 2-bit version number and 6-bit aspect ratio.
+// The file format has four variants, combining two quality settings (P is
+// Potato, X is Extremely Potato) and two color settings (C is Color, G is
+// Gray). Each Handsum Variant (named HV??) is a fixed number of bytes:
 //
-// As of February 2025, the latest version is Version 0. All Version 0 files
-// use the sRGB color profile.
+//   - The HVPC variant is 147 bytes long.
+//   - The HVPG variant is  99 bytes long.
+//   - The HVXC variant is  48 bytes long.
+//   - The HVXG variant is  33 bytes long.
+//
+// For example, every HVXC image file is exactly 48 bytes (384 bits) long. For
+// a 32×32 pixel image, this uses 0.375 bits (0.046875 bytes) per pixel.
+//
+// HVPC (P for Potato, not X for Extremely Potato), always 147 bytes, uses
+// 1.1484375 bits per pixel for a 32×32 pixel image (a 1:1 aspect ratio), or
+// 1.53125 bits per pixel for a 32×24 pixel image (a 4:3 aspect ratio).
+//
+// A Handsum file's starts with a 3 byte header: a 16-bit magic signature, a
+// 2-bit variant and a 6-bit aspect ratio. An image's longest dimension (width
+// or height) is 32 pixels and the aspect ratio gives the shorter dimension.
+//
+// The C (Color) payload, after the header, holds a scaled 16×16 pixel YCbCr
+// 4:2:0 JPEG MCU (Minimum Coded Unit), 4 Luma and 2 Chroma blocks. Each block
+// is 8×8 pixels.
+//
+// The G (Gray) payload is just the C payload with the 4 Luma blocks but
+// without the 2 Chroma blocks. This drops the final 48 (for P, Potato) or 15
+// (for X, Extremely Potato) bytes from the C variant's encoding.
+//
+// P (Potato) splits the MCU into 8×8 pixel blocks and further splits each
+// block into 2×2 pixel mini-blocks. DCT (Discrete Cosine Transform) is applied
+// to each mini-block, producing 4 DCT coefficients. Only the 3 lowest
+// frequency DCT coefficients are kept.
+//
+// X (Extremely Potato) splits the MCU into 8×8 pixel blocks. DCT is applied to
+// each block, producing 64 DCT coefficients, just like JPEG. Only the 15
+// lowest frequency DCT coefficients are kept. Lowest frequency means the
+// top-left corner in the usual visualization of JPEG's zig-zag ordering.
+//
+// Either way, P or X, each DCT coefficient is encoded as one nibble (4 bits;
+// half a byte) with fixed bias and quantization factors. Each 8×8 pixel block
+// encodes in 48 (P) or 15 (X) nibbles.
+//
+// All Handsum images use the sRGB color profile.
+//
+// The "Handsum" name was inspired by the "Thumbhash" image file format, which
+// is also designed for very small thumbnails (or very compact representations
+// of image placeholders). Handsum files are bigger (but better quality) than
+// Thumbhash. "Handsum" also sounds like "handsome", meaning "good looking".
 package handsum
 
 import (
@@ -39,8 +76,48 @@ import (
 	"golang.org/x/image/draw"
 )
 
-// FileSize is the size (in bytes) of every Handsum image file.
-const FileSize = 48
+// Variant represents one of the Handsum file format's four variants.
+//
+// The zero value means unknown (before decoding) or to use the default option
+// (when encoding).
+type Variant uint8
+
+const (
+	VariantExtremelyPotatoGray  = Variant(1)
+	VariantExtremelyPotatoColor = Variant(2)
+	VariantPotatoGray           = Variant(3)
+	VariantPotatoColor          = Variant(4)
+)
+
+func (v Variant) isExtremelyPotato() bool { return v <= VariantExtremelyPotatoColor }
+func (v Variant) isGray() bool            { return (v & 1) != 0 }
+func (v Variant) numberOfBlocks() int     { return 6 - (2 * int(v&1)) }
+
+func (v Variant) fileSize() int {
+	switch v {
+	case VariantExtremelyPotatoGray:
+		return FileSizeHVXG
+	case VariantExtremelyPotatoColor:
+		return FileSizeHVXC
+	case VariantPotatoGray:
+		return FileSizeHVPG
+	}
+	return FileSizeHVPC
+}
+
+const (
+	// FileSizeHVXG is the size (in bytes) of every HVXG Handsum image file.
+	FileSizeHVXG = 33
+	// FileSizeHVXC is the size (in bytes) of every HVXC Handsum image file.
+	FileSizeHVXC = 48
+	// FileSizeHVPG is the size (in bytes) of every HVPG Handsum image file.
+	FileSizeHVPG = 99
+	// FileSizeHVPC is the size (in bytes) of every HVPC Handsum image file.
+	FileSizeHVPC = 147
+
+	fileSizeHeader = 3
+	fileSizeMax    = 147
+)
 
 // MaxDimension is the maximum (inclusive) width or height of every Handsum
 // image file.
@@ -59,16 +136,23 @@ func init() {
 }
 
 var (
-	ErrBadArgument            = errors.New("handsum: bad argument")
-	ErrNotAHandsumFile        = errors.New("handsum: not a handsum file")
-	ErrUnsupportedFileVersion = errors.New("handsum: unsupported file version")
+	ErrBadArgument     = errors.New("handsum: bad argument")
+	ErrNotAHandsumFile = errors.New("handsum: not a handsum file")
 )
 
 // EncodeOptions are optional arguments to Encode. The zero value is valid and
 // means to use the default configuration.
-//
-// There are no fields for now, but there may be some in the future.
 type EncodeOptions struct {
+	// Variant is which of the four Handsum Variants to use. If zero, the
+	// default is HVPC (Handsum Variant Potato Color).
+	Variant Variant
+}
+
+func (o *EncodeOptions) variant() Variant {
+	if (o != nil) && (1 <= o.Variant) && (o.Variant <= 4) {
+		return o.Variant
+	}
+	return VariantPotatoColor
 }
 
 // Encode writes src to w in the Handsum format.
@@ -105,30 +189,89 @@ func Encode(w io.Writer, src image.Image, options *EncodeOptions) error {
 	dstU8s := lowleveljpeg.Array6BlockU8{}
 	dstU8s.ExtractFrom(dst, 0, 0)
 
-	dstI16s := lowleveljpeg.Array6BlockI16{}
-	dstI16s.ForwardDCTFrom(&dstU8s)
-
-	buf := [FileSize]byte{}
+	v := options.variant()
+	buf := [fileSizeMax]byte{}
 	buf[0] = Magic[0]
 	buf[1] = Magic[1]
-	buf[2] = aspectRatio | 0x40
+	buf[2] = aspectRatio | ((uint8(v) - 1) << 6)
 
 	bitOffset := 3 * 8
-	for i := range dstI16s {
-		bitOffset = encodeBlock(&buf, bitOffset, &dstI16s[i])
+	if v.isExtremelyPotato() {
+		dstI16s := lowleveljpeg.Array6BlockI16{}
+		dstI16s.ForwardDCTFrom(&dstU8s)
+		for i := range v.numberOfBlocks() {
+			bitOffset = encodeXBlock(&buf, bitOffset, &dstI16s[i])
+		}
+	} else {
+		// Biasing the Chroma blocks by +8 shifts the neutral (gray) Chroma
+		// values from 0x80 to 0x88. encodePBlock's DC coefficient quantization
+		// can encode multiples of 0x11 losslessly.
+		biasUp(&dstU8s[4])
+		biasUp(&dstU8s[5])
+		for i := range v.numberOfBlocks() {
+			bitOffset = encodePBlock(&buf, bitOffset, &dstU8s[i])
+		}
 	}
 
-	_, err := w.Write(buf[:])
+	_, err := w.Write(buf[:bitOffset/8])
 	return err
 }
 
-func encodeBlock(buf *[FileSize]byte, bitOffset int, b *lowleveljpeg.BlockI16) int {
-	for i := 0; i < nCoeffs; i++ {
+func encodePBlock(buf *[fileSizeMax]byte, bitOffset int, b *lowleveljpeg.BlockU8) int {
+	for i := range 16 {
+		x := 2 * (i & 3)
+		y := 2 * (i >> 2)
+		j := (8 * y) + x
+
+		b00 := int(b[j+0o00])
+		b01 := int(b[j+0o01])
+		b10 := int(b[j+0o10])
+		b11 := int(b[j+0o11])
+
+		// Compute the quantized DC coefficient.
+		//
+		// "(p + q + r + s + 2) >> 2" takes the average of four numbers,
+		// rounding properly. Shifting by (2 + 4) instead of by 2 quantizes the
+		// range [0x00, 0xFF] to [0x0, 0xF].
+		avgw := (+b00 + b01 + b10 + b11 + 2) >> 6
+
+		// Compute the quantized AC coefficients: one horizontal and one
+		// vertical. These two lines are equivalent to:
+		//
+		// avgx := (((-b00 + b01 - b10 + b11 + 2) >> 2) + 2) >> 2
+		// avgy := (((-b00 - b01 + b10 + b11 + 2) >> 2) + 2) >> 2
+		//
+		// The inner "(foo + 2) >> 2" calculation is like taking an average.
+		//
+		// In theory, the outer calculation should be "(foo + 4) >> 3" instead
+		// of "(foo + 2) >> 2", since on the decode side, we multiply by 8.
+		// Scaling by 2 is an arbitrary adjustment that's not mirrored on the
+		// decode side, but the results seem a little more vibrant.
+		avgx := (-b00 + b01 - b10 + b11 + 10) >> 4
+		avgy := (-b00 - b01 + b10 + b11 + 10) >> 4
+
+		// Clip DC to [0, 15] and AC to [-8, +7]. Pack it in a nibble.
+		ew := max(0, min(15, avgw+0))
+		ex := max(0, min(15, avgx+8))
+		ey := max(0, min(15, avgy+8))
+
+		buf[bitOffset>>3] |= uint8(ew) << (bitOffset & 4)
+		bitOffset += 4
+		buf[bitOffset>>3] |= uint8(ex) << (bitOffset & 4)
+		bitOffset += 4
+		buf[bitOffset>>3] |= uint8(ey) << (bitOffset & 4)
+		bitOffset += 4
+	}
+	return bitOffset
+}
+
+func encodeXBlock(buf *[fileSizeMax]byte, bitOffset int, b *lowleveljpeg.BlockI16) int {
+	for i := range nCoeffs {
 		e := uint8(0)
 		if i == 0 {
-			e = encodeDC(b[0])
+			e = encodeXDC(b[0])
 		} else {
-			e = encodeAC(b[zigzag[i]])
+			e = encodeXAC(b[zigzag[i]])
 		}
 		buf[bitOffset>>3] |= e << (bitOffset & 4)
 		bitOffset += 4
@@ -137,7 +280,7 @@ func encodeBlock(buf *[FileSize]byte, bitOffset int, b *lowleveljpeg.BlockI16) i
 	return bitOffset
 }
 
-func encodeDC(value int16) uint8 {
+func encodeXDC(value int16) uint8 {
 	const w = dcBucketWidth
 
 	v := int32(value) + ((w * 8) + (w / 2))
@@ -150,8 +293,8 @@ func encodeDC(value int16) uint8 {
 	return uint8(v)
 }
 
-func encodeAC(value int16) uint8 {
-	// Dividing by 2 is an arbitrary adjustment that's not mirrored on the
+func encodeXAC(value int16) uint8 {
+	// Scaling by 2 is an arbitrary adjustment that's not mirrored on the
 	// decode side, but the results seem a little more vibrant.
 	const w = acBucketWidth / 2
 
@@ -165,8 +308,8 @@ func encodeAC(value int16) uint8 {
 	return uint8(v)
 }
 
-// Both DC and AC coefficients are quantized into 16 buckets (4 bits), but they
-// use different bucket widths:
+// For X (Extremely Potato), both DC and AC coefficients are quantized into 16
+// buckets (4 bits), but they use different bucket widths:
 //
 //	Bucket    DC      AC
 //	0x0    -1024    -128
@@ -187,18 +330,20 @@ const (
 
 // DecodeConfig reads a Handsum image configuration from r.
 func DecodeConfig(r io.Reader) (image.Config, error) {
-	buf := [3]byte{}
+	buf := [fileSizeHeader]byte{}
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return image.Config{}, err
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return image.Config{}, ErrNotAHandsumFile
-	} else if (buf[2] & 0xC0) != 0x40 {
-		return image.Config{}, ErrUnsupportedFileVersion
+	}
+	cm := color.RGBAModel
+	if v := Variant(buf[2]>>6) + 1; v.isGray() {
+		cm = color.GrayModel
 	}
 
 	w, h := decodeWidthAndHeight(buf[2])
 	return image.Config{
-		ColorModel: color.RGBAModel,
+		ColorModel: cm,
 		Width:      w,
 		Height:     h,
 	}, nil
@@ -206,16 +351,22 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 
 // Decode reads a Handsum image from r.
 func Decode(r io.Reader) (image.Image, error) {
-	buf := [FileSize]byte{}
-	if _, err := io.ReadFull(r, buf[:]); err != nil {
+	buf := [fileSizeMax]byte{}
+	if _, err := io.ReadFull(r, buf[:fileSizeHeader]); err != nil {
 		return nil, err
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return nil, ErrNotAHandsumFile
-	} else if (buf[2] & 0xC0) != 0x40 {
-		return nil, ErrUnsupportedFileVersion
+	}
+	v := Variant(buf[2]>>6) + 1
+	if _, err := io.ReadFull(r, buf[fileSizeHeader:v.fileSize()]); err != nil {
+		return nil, err
 	}
 
 	bitOffset := 3 * 8
+	decodeBlock := decodePBlock
+	if v.isExtremelyPotato() {
+		decodeBlock = decodeXBlock
+	}
 	lumaQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
 	bitOffset = decodeBlock(lumaQuadBlockU8[0x00:], 16, &buf, bitOffset)
 	bitOffset = decodeBlock(lumaQuadBlockU8[0x08:], 16, &buf, bitOffset)
@@ -223,24 +374,39 @@ func Decode(r io.Reader) (image.Image, error) {
 	bitOffset = decodeBlock(lumaQuadBlockU8[0x88:], 16, &buf, bitOffset)
 	smoothLumaBlockSeams(&lumaQuadBlockU8)
 
-	cbBlockU8 := lowleveljpeg.BlockU8{}
-	bitOffset = decodeBlock(cbBlockU8[:], 8, &buf, bitOffset)
-	cbQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
-	cbQuadBlockU8.UpsampleFrom(&cbBlockU8)
+	src := image.Image(nil)
+	if v.isGray() {
+		src = &image.Gray{
+			Pix:    lumaQuadBlockU8[:],
+			Stride: 16,
+			Rect:   image.Rectangle{Max: image.Point{X: 16, Y: 16}},
+		}
 
-	crBlockU8 := lowleveljpeg.BlockU8{}
-	bitOffset = decodeBlock(crBlockU8[:], 8, &buf, bitOffset)
-	crQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
-	crQuadBlockU8.UpsampleFrom(&crBlockU8)
+	} else {
+		cbBlockU8 := lowleveljpeg.BlockU8{}
+		crBlockU8 := lowleveljpeg.BlockU8{}
 
-	src := &image.YCbCr{
-		Y:              lumaQuadBlockU8[:],
-		Cb:             cbQuadBlockU8[:],
-		Cr:             crQuadBlockU8[:],
-		YStride:        16,
-		CStride:        16,
-		SubsampleRatio: image.YCbCrSubsampleRatio444,
-		Rect:           image.Rectangle{Max: image.Point{X: 16, Y: 16}},
+		bitOffset = decodeBlock(cbBlockU8[:], 8, &buf, bitOffset)
+		bitOffset = decodeBlock(crBlockU8[:], 8, &buf, bitOffset)
+		if v == VariantPotatoColor {
+			biasDown(&cbBlockU8)
+			biasDown(&crBlockU8)
+		}
+
+		cbQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
+		cbQuadBlockU8.UpsampleFrom(&cbBlockU8)
+		crQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
+		crQuadBlockU8.UpsampleFrom(&crBlockU8)
+
+		src = &image.YCbCr{
+			Y:              lumaQuadBlockU8[:],
+			Cb:             cbQuadBlockU8[:],
+			Cr:             crQuadBlockU8[:],
+			YStride:        16,
+			CStride:        16,
+			SubsampleRatio: image.YCbCrSubsampleRatio444,
+			Rect:           image.Rectangle{Max: image.Point{X: 16, Y: 16}},
+		}
 	}
 
 	dstW, dstH := decodeWidthAndHeight(buf[2])
@@ -260,7 +426,34 @@ func decodeWidthAndHeight(buf2 byte) (w int, h int) {
 	return w, h
 }
 
-func decodeBlock(dst []byte, stride int, src *[FileSize]byte, bitOffset int) int {
+func decodePBlock(dst []byte, stride int, src *[fileSizeMax]byte, bitOffset int) int {
+	for i := range 16 {
+		// Decode the quantized-by-0x11 DC coefficient, covering [0x00, 0xFF].
+		ew := int((src[bitOffset>>3] >> (bitOffset & 4)) & 15)
+		bitOffset += 4
+
+		// Decode the quantized-by-8 AC coefficients, covering [-64, +56]. The
+		// -8 here, which applies to both Luma and Chroma blocks, is not the
+		// Chroma-only bias handled by biasUp and biasDown.
+		ex := int((src[bitOffset>>3]>>(bitOffset&4))&15) - 8
+		bitOffset += 4
+		ey := int((src[bitOffset>>3]>>(bitOffset&4))&15) - 8
+		bitOffset += 4
+
+		x := 2 * (i & 3)
+		y := 2 * (i >> 2)
+		j0 := ((y + 0) * stride) + x
+		j1 := ((y + 1) * stride) + x
+
+		dst[j0+0] = uint8(max(0x00, min(0xFF, (ew*0x11)+((-ey-ex)*8))))
+		dst[j0+1] = uint8(max(0x00, min(0xFF, (ew*0x11)+((-ey+ex)*8))))
+		dst[j1+0] = uint8(max(0x00, min(0xFF, (ew*0x11)+((+ey-ex)*8))))
+		dst[j1+1] = uint8(max(0x00, min(0xFF, (ew*0x11)+((+ey+ex)*8))))
+	}
+	return bitOffset
+}
+
+func decodeXBlock(dst []byte, stride int, src *[fileSizeMax]byte, bitOffset int) int {
 	a := lowleveljpeg.BlockI16{}
 
 	{
@@ -278,7 +471,7 @@ func decodeBlock(dst []byte, stride int, src *[FileSize]byte, bitOffset int) int
 	b := lowleveljpeg.BlockU8{}
 	b.InverseDCTFrom(&a)
 
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		di := i * stride
 		bi := i * 8
 		copy(dst[di:di+8], b[bi:bi+8])
@@ -289,13 +482,26 @@ func decodeBlock(dst []byte, stride int, src *[FileSize]byte, bitOffset int) int
 
 const nCoeffs = 15
 
-// zigzag represents JPEG's zig-zag order for visiting coefficients. Handsum
-// only uses the first (1 + 2 + 3 + 4 + 5) = 15 of JPEG's 64 coefficients.
+// zigzag represents JPEG's zig-zag order for visiting DCT coefficients. X
+// (Extremely Potato) only uses the first (1 + 2 + 3 + 4 + 5) = 15 of JPEG's 64
+// DCT coefficients.
 //
 // https://en.wikipedia.org/wiki/File:JPEG_ZigZag.svg
 var zigzag = [nCoeffs]uint8{
 	0o00, 0o01, 0o10, 0o20, 0o11, 0o02, 0o03, 0o12, //  0,  1,  8, 16,  9,  2,  3, 10,
 	0o21, 0o30, 0o40, 0o31, 0o22, 0o13, 0o04, //       17, 24, 32, 25, 18, 11,  4,
+}
+
+func biasUp(b *lowleveljpeg.BlockU8) {
+	for i, v := range b {
+		b[i] = uint8(min(0xFF, int(v)+8))
+	}
+}
+
+func biasDown(b *lowleveljpeg.BlockU8) {
+	for i, v := range b {
+		b[i] = uint8(max(0x00, int(v)-8))
+	}
 }
 
 func smoothLumaBlockSeams(b *lowleveljpeg.QuadBlockU8) {
