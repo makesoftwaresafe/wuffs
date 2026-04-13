@@ -370,6 +370,26 @@ wuffs_base__color_ycc__as__color_u32_abgr(uint8_t yy, uint8_t cb, uint8_t cr) {
          ((0x00FF0000 & rr32) >> 16);
 }
 
+// wuffs_base__color_swap_u32_argb_abgr converts between 0xAARRGGBB and
+// 0xAABBGGRR.
+static inline uint32_t  //
+wuffs_base__color_swap_u32_argb_abgr(uint32_t u) {
+  uint32_t o = u & 0xFF00FF00ul;
+  uint32_t r = u & 0x00FF0000ul;
+  uint32_t b = u & 0x000000FFul;
+  return o | (r >> 16) | (b << 16);
+}
+
+// wuffs_base__color_swap_u64_argb_abgr converts between 0xAAAARRRRGGGGBBBB and
+// 0xAAAABBBBGGGGRRRR.
+static inline uint64_t  //
+wuffs_base__color_swap_u64_argb_abgr(uint64_t u) {
+  uint64_t o = u & 0xFFFF0000FFFF0000ull;
+  uint64_t r = u & 0x0000FFFF00000000ull;
+  uint64_t b = u & 0x000000000000FFFFull;
+  return o | (r >> 32) | (b << 32);
+}
+
 // --------
 
 typedef uint8_t wuffs_base__pixel_blend;
