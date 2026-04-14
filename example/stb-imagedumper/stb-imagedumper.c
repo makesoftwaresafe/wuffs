@@ -156,11 +156,12 @@ for a C compiler $CC, such as clang or gcc.
 // ----
 //
 // This program uses the STB API, not the wuffs_aux C++ API. We only ever pass
-// 1 (STBI_grey) or 3 (STBI_rgb), not 0, 2 or 4, as the desired_channels
-// argument to stbi_load_etc functions, so we only need ALLOW_Y and ALLOW_RGB.
+// 1 (STBI_grey) or 4 (STBI_rgb_alpha), not 0, 2 or 3, as the desired_channels
+// argument to stbi_load_etc functions, so we only need ALLOW_Y and
+// ALLOW_RGBA_NONPREMUL.
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ENABLE_ALLOWLIST
 #define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_Y
-#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_RGB
+#define WUFFS_CONFIG__DST_PIXEL_FORMAT__ALLOW_RGBA_NONPREMUL
 
 // Defining this enables Wuffs' reimplementation of the STB library's API.
 #define WUFFS_CONFIG__ENABLE_DROP_IN_REPLACEMENT__STB
@@ -169,6 +170,10 @@ for a C compiler $CC, such as clang or gcc.
 // relative includes, you can use the script/inline-c-relative-includes.go
 // program to generate a stand-alone C file.
 #include "../../release/c/wuffs-unsupported-snapshot.c"
+
+#define PARSE_COLOR_CONFIG__STATIC_FUNCTIONS
+#define PARSE_COLOR_IMPLEMENTATION
+#include "../../snippet/parse-color.c"
 
 #endif  // defined(USE_THE_REAL_STBI)
 
@@ -625,6 +630,10 @@ struct {
   bool demo;
   bool natural_size;
   int resize;
+
+  // background_color is in 0xAABBGGRR order, the same as STB (assuming
+  // little-endian).
+  uint32_t background_color;
 } g_flags = {0};
 
 static const char* g_usage =
@@ -634,6 +643,7 @@ static const char* g_usage =
     "    -a or -ascii-art (use ASCII art instead of ANSI color codes)\n"
     "    -B or -braille-art-dark-mode (use white-on-black Braille art)\n"
     "    -b or -braille-art-light-mode (use black-on-white Braille art)\n"
+    "    -c=orange or -background-color=ff9800 (set a background color)\n"
     "    -demo (dump the built-in demonstration images)\n"
     "    -n or -natural-size (use each image's natural size); this\n"
     "        overrides -resize=N\n"
@@ -682,6 +692,18 @@ parse_flags(int argc, char** argv) {
     }
     if (!strcmp(arg, "n") || !strcmp(arg, "natural-size")) {
       g_flags.natural_size = true;
+      continue;
+    }
+    if (!strncmp(arg, "c=", 2) || !strncmp(arg, "background-color=", 17)) {
+      while (*arg++ != '=') {
+      }
+      int64_t c = parse_color(arg, strlen(arg));
+      if (c < 0) {
+        return g_usage;
+      }
+      g_flags.background_color = wuffs_base__color_swap_u32_argb_abgr(
+          wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+              (uint32_t)(c)));
       continue;
     }
     if (!strncmp(arg, "resize=", 7)) {
@@ -753,7 +775,7 @@ resize(int* inout_w,
   if (!inout_w || !inout_h || (dst_wh <= 0) || (0x4000 < dst_wh) ||  //
       (*inout_w <= 0) || (0xffffff < *inout_w) ||                    //
       (*inout_h <= 0) || (0xffffff < *inout_h) ||                    //
-      ((bytes_per_pixel != 1) && (bytes_per_pixel != 3))) {
+      ((bytes_per_pixel != 1) && (bytes_per_pixel != 4))) {
     printf("main: resize failed: invalid argument\n");
     return NULL;
   }
@@ -791,6 +813,7 @@ resize(int* inout_w,
       uint64_t tot0 = 0;
       uint64_t tot1 = 0;
       uint64_t tot2 = 0;
+      uint64_t tot3 = 0;
       uint64_t totw = 0;
 
       uint64_t ty = dy * sh;
@@ -811,10 +834,11 @@ resize(int* inout_w,
             size_t i = (((size_t)sy * (size_t)sw) + (size_t)sx) * 1;
             tot0 += weight * src_pixels[i + 0];
           } else {
-            size_t i = (((size_t)sy * (size_t)sw) + (size_t)sx) * 3;
+            size_t i = (((size_t)sy * (size_t)sw) + (size_t)sx) * 4;
             tot0 += weight * src_pixels[i + 0];
             tot1 += weight * src_pixels[i + 1];
             tot2 += weight * src_pixels[i + 2];
+            tot3 += weight * src_pixels[i + 3];
           }
         }
       }
@@ -825,6 +849,7 @@ resize(int* inout_w,
         *dst++ = (unsigned char)(((tot0 * 2) + totw) / (totw * 2));
         *dst++ = (unsigned char)(((tot1 * 2) + totw) / (totw * 2));
         *dst++ = (unsigned char)(((tot2 * 2) + totw) / (totw * 2));
+        *dst++ = (unsigned char)(((tot3 * 2) + totw) / (totw * 2));
       }
     }
   }
@@ -833,6 +858,55 @@ resize(int* inout_w,
   *inout_w = (int)dw;
   *inout_h = (int)dh;
   return dst_pixels;
+}
+
+static inline uint32_t  //
+composite_premul_nonpremul_u32_axxx(uint32_t dst_premul,
+                                    uint32_t src_nonpremul) {
+  // Extract 16-bit color components.
+  uint32_t da = 0x101 * (0xFF & (dst_premul >> 24));
+  uint32_t dr = 0x101 * (0xFF & (dst_premul >> 16));
+  uint32_t dg = 0x101 * (0xFF & (dst_premul >> 8));
+  uint32_t db = 0x101 * (0xFF & (dst_premul >> 0));
+  uint32_t sa = 0x101 * (0xFF & (src_nonpremul >> 24));
+  uint32_t sr = 0x101 * (0xFF & (src_nonpremul >> 16));
+  uint32_t sg = 0x101 * (0xFF & (src_nonpremul >> 8));
+  uint32_t sb = 0x101 * (0xFF & (src_nonpremul >> 0));
+
+  // Calculate the inverse of the src-alpha: how much of the dst to keep.
+  uint32_t ia = 0xFFFF - sa;
+
+  // Composite src (nonpremul) over dst (premul).
+  da = sa + ((da * ia) / 0xFFFF);
+  dr = ((sr * sa) + (dr * ia)) / 0xFFFF;
+  dg = ((sg * sa) + (dg * ia)) / 0xFFFF;
+  db = ((sb * sa) + (db * ia)) / 0xFFFF;
+
+  // Convert from 16-bit color to 8-bit color.
+  da >>= 8;
+  dr >>= 8;
+  dg >>= 8;
+  db >>= 8;
+
+  // Combine components.
+  return (db << 0) | (dg << 8) | (dr << 16) | (da << 24);
+}
+
+static void  //
+apply_background_color(uint32_t bg_color_premul,
+                       unsigned char* pixels,
+                       int w,
+                       int h) {
+  for (int64_t n = ((int64_t)(w)) * ((int64_t)(h)); n--;) {
+    uint32_t fg_color_nonpremul =
+        wuffs_base__peek_u32le__no_bounds_check(pixels);
+    if ((fg_color_nonpremul >> 24) != 0xFFu) {
+      wuffs_base__poke_u32le__no_bounds_check(
+          pixels, composite_premul_nonpremul_u32_axxx(bg_color_premul,
+                                                      fg_color_nonpremul));
+    }
+    pixels += 4;
+  }
 }
 
 // ----------------
@@ -855,8 +929,9 @@ handle(const char* filename,
   int channels_in_file = 0;
   int bytes_per_pixel = (g_flags.ascii_art || g_flags.braille_art_dark_mode ||
                          g_flags.braille_art_light_mode)
-                            ? STBI_grey  // 1.
-                            : STBI_rgb;  // 3.
+                            ? STBI_grey        // 1.
+                            : STBI_rgb_alpha;  // 4.
+
   unsigned char* src_pixels = NULL;
 
 #if defined(WUFFS_EXAMPLE_USE_TIMERS)
@@ -975,7 +1050,8 @@ handle(const char* filename,
       fwrite(buffer, sizeof(char), dst - buffer, stdout);
     }
 
-  } else {
+  } else if (bytes_per_pixel == 4) {
+    apply_background_color(g_flags.background_color, pixels, w, h);
     unsigned char* src = pixels;
     for (int y = 0; y < h; y += 2) {
       char* dst = buffer;
@@ -990,21 +1066,21 @@ handle(const char* filename,
           dst += sprintf(dst, "\x1B[38;2;%d;%d;%dm\xE2\x96\x80",  //
                          upper0, upper1, upper2);
         } else {
-          uint8_t lower0 = (uint8_t)src[(w * 3) + 0];
-          uint8_t lower1 = (uint8_t)src[(w * 3) + 1];
-          uint8_t lower2 = (uint8_t)src[(w * 3) + 2];
+          uint8_t lower0 = (uint8_t)src[(w * bytes_per_pixel) + 0];
+          uint8_t lower1 = (uint8_t)src[(w * bytes_per_pixel) + 1];
+          uint8_t lower2 = (uint8_t)src[(w * bytes_per_pixel) + 2];
           dst +=
               sprintf(dst,
                       "\x1B[38;2;%d;%d;%dm\x1B[48;2;%d;%d;%dm\xE2\x96\x80",  //
                       upper0, upper1, upper2, lower0, lower1, lower2);
         }
-        src += 3;
+        src += bytes_per_pixel;
       }
       memcpy(dst, "\x1B[0m\n", 5);
       dst += 5;
       fwrite(buffer, sizeof(char), dst - buffer, stdout);
       if ((y + 1) < h) {
-        src += w * 3;
+        src += w * bytes_per_pixel;
       }
     }
   }
