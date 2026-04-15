@@ -34014,7 +34014,7 @@ wuffs_private_impl__swizzle_ycc__convert_3_rgbx_x86_avx2(
     const uint8_t* up1,
     const uint8_t* up2) {
   if ((x + 32u) > x_end) {
-    wuffs_private_impl__swizzle_ycc__convert_3_bgrx(  //
+    wuffs_private_impl__swizzle_ycc__convert_3_rgbx(  //
         dst, x, x_end, y, up0, up1, up2);
     return;
   }
