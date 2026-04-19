@@ -91,44 +91,20 @@ func (dst *BlockI16) ForwardDCTFrom(src *BlockU8) {
 		return
 	}
 
-	// Convert from uint8 to int64, applying an 0x80 bias.
-	srcI64 := [4]int64{}
-	for i, v := range src {
-		srcI64[i] = int64(v) - 0x80
-	}
+	// This is equivalent to (but a simpler implementation than) lowleveljpeg's
+	// "Iterate in DCT space (outer) and XY space (inner)" v/u/y/x-loop, except
+	// that it operates on 2×2 blocks instead of JPEG's 8×8 blocks. Simpler
+	// also means that it has slightly more accurate rounding behavior.
 
-	// Iterate in DCT space (outer) and XY space (inner).
-	for v := 0; v < 2; v++ {
-		halfAlphaV16 := ifElse(v == 0, fixedPointInvSqrt2, fixedPointOne)
-		for u := 0; u < 2; u++ {
-			halfAlphaU16 := ifElse(u == 0, fixedPointInvSqrt2, fixedPointOne)
-			// alphas32 is two 16.16 fixed point values multiplied together, as
-			// a 32.32 fixed point value.
-			alphas32 := halfAlphaV16 * halfAlphaU16
-			sum32 := int64(0)
+	src0 := int32(src[0]) - 0x80
+	src1 := int32(src[1]) - 0x80
+	src2 := int32(src[2]) - 0x80
+	src3 := int32(src[3]) - 0x80
 
-			for y := 0; y < 2; y++ {
-				for x := 0; x < 2; x++ {
-					// c32 is two 16.16 fixed point values multiplied together,
-					// as a 32.32 fixed point value.
-					//
-					// sum32 accumulates a 32.32 fixed point value.
-					c32 := int64(cosines[(((2*x)+1)*u)&7]) *
-						int64(cosines[(((2*y)+1)*v)&7])
-					sum32 += srcI64[(2*y)+x] * c32
-				}
-			}
-
-			// Calculate alphasSum32 as 32.32 fixed point.
-			alphas16 := (alphas32 + (1 << 15)) >> 16
-			sum16 := (sum32 + (1 << 15)) >> 16
-			alphasSum32 := alphas16 * sum16
-
-			// Store alphasSum32 as 16.0 fixed point.
-			result0 := (alphasSum32 + (1 << 31)) >> 32
-			dst[(2*v)+u] = int16(result0)
-		}
-	}
+	dst[0] = int16((+src0 + src1 + src2 + src3 + 1) >> 1)
+	dst[1] = int16((+src0 - src1 + src2 - src3 + 1) >> 1)
+	dst[2] = int16((+src0 + src1 - src2 - src3 + 1) >> 1)
+	dst[3] = int16((+src0 - src1 - src2 + src3 + 1) >> 1)
 }
 
 // BlockI16 is a 2×2 block of int16 values, such as a block of JPEG
@@ -195,43 +171,20 @@ func (dst *BlockU8) InverseDCTFrom(src *BlockI16) {
 		return
 	}
 
-	// Convert from int16 to int64.
-	srcI64 := [4]int64{}
-	for i, v := range src {
-		srcI64[i] = int64(v)
-	}
+	// This is equivalent to (but a simpler implementation than) lowleveljpeg's
+	// "Iterate in XY space (outer) and DCT space (inner)" y/x/v/u-loop, except
+	// that it operates on 2×2 blocks instead of JPEG's 8×8 blocks. Simpler
+	// also means that it has slightly more accurate rounding behavior.
 
-	// Iterate in XY space (outer) and DCT space (inner).
-	for y := 0; y < 2; y++ {
-		for x := 0; x < 2; x++ {
-			alphasSum32 := int64(0)
+	src0 := int32(src[0])
+	src1 := int32(src[1])
+	src2 := int32(src[2])
+	src3 := int32(src[3])
 
-			for v := 0; v < 2; v++ {
-				halfAlphaV16 := ifElse(v == 0, fixedPointInvSqrt2, fixedPointOne)
-				for u := 0; u < 2; u++ {
-					halfAlphaU16 := ifElse(u == 0, fixedPointInvSqrt2, fixedPointOne)
-					// alphas16 is two 16.16 fixed point values multiplied
-					// together, as a 48.16 fixed point value.
-					alphas16 := ((halfAlphaV16 * halfAlphaU16) + (1 << 15)) >> 16
-
-					// c32 is two 16.16 fixed point values multiplied together,
-					// as a 32.32 fixed point value.
-					//
-					// c16 is c32 as a 48.16 fixed point value.
-					//
-					// alphasSum32 accumulates a 32.32 fixed point value.
-					c32 := int64(cosines[(((2*x)+1)*u)&7]) *
-						int64(cosines[(((2*y)+1)*v)&7])
-					c16 := (c32 + (1 << 15)) >> 16
-					alphasSum32 += srcI64[(2*v)+u] * (alphas16 * c16)
-				}
-			}
-
-			// Store alphasSum32, biased and clamped, as 8.0 fixed point.
-			result0 := (alphasSum32 + (1 << 31)) >> 32
-			dst[(2*y)+x] = biasAndClamp[result0&1023]
-		}
-	}
+	dst[0] = biasAndClamp[((+src0+src1+src2+src3+1)>>1)&1023]
+	dst[1] = biasAndClamp[((+src0-src1+src2-src3+1)>>1)&1023]
+	dst[2] = biasAndClamp[((+src0+src1-src2-src3+1)>>1)&1023]
+	dst[3] = biasAndClamp[((+src0-src1-src2+src3+1)>>1)&1023]
 }
 
 // IsValid returns whether b does not contain unexpectedly extreme values for
@@ -256,27 +209,6 @@ func (b *BlockI16) IsValid() bool {
 		}
 	}
 	return true
-}
-
-// These are "1" and "1 / √2" as 16.16 fixed point values.
-const (
-	fixedPointOne      = +0x10000
-	fixedPointInvSqrt2 = +0x0B504
-)
-
-// cosines is a cosine table as 16.16 fixed point values.
-var cosines = [32]int32{
-	+0x10000, // cos(π/4 * 0)
-	+0x0B504, // cos(π/4 * 1)
-
-	+0x00000, // cos(π/4 * 2)
-	-0x0B504, // cos(π/4 * 3)
-
-	-0x10000, // cos(π/4 * 4)
-	-0x0B504, // cos(π/4 * 5)
-
-	+0x00000, // cos(π/4 * 6)
-	+0x0B504, // cos(π/4 * 7)
 }
 
 // biasAndClamp[x & 1023] is (x + 0x80), clamped to the range [0x00, 0xFF], for

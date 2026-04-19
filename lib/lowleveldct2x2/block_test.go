@@ -31,7 +31,7 @@ func TestRoundTrip(tt *testing.T) {
 	got := src.ForwardDCT()
 	want := BlockI16{
 		-0x0058, -0x0017,
-		+0x0067, -0x0057,
+		+0x0068, -0x0057,
 	}
 	if got != want {
 		tt.Fatalf("incorrect DCT\n\n%v\n%v", got, want)
