@@ -262,30 +262,30 @@ func (b *BlockI16) IsValid() bool {
 
 // These are "1 / √2" and  "1 / 2" as 16.16 fixed point values.
 const (
-	fixedPointInvSqrt2 = +0xB504
+	fixedPointInvSqrt2 = +0xB505
 	fixedPointHalf     = +0x8000
 )
 
 // cosines is a cosine table as 16.16 fixed point values.
-var cosines = [32]int32{
+var cosines = [16]int32{
 	+0x10000, // cos(π/8 *  0)
 	+0x0EC83, // cos(π/8 *  1)
-	+0x0B504, // cos(π/8 *  2)
-	+0x061F7, // cos(π/8 *  3)
+	+0x0B505, // cos(π/8 *  2)
+	+0x061F8, // cos(π/8 *  3)
 
 	+0x00000, // cos(π/8 *  4)
-	-0x061F7, // cos(π/8 *  5)
-	-0x0B504, // cos(π/8 *  6)
+	-0x061F8, // cos(π/8 *  5)
+	-0x0B505, // cos(π/8 *  6)
 	-0x0EC83, // cos(π/8 *  7)
 
 	-0x10000, // cos(π/8 *  8)
 	-0x0EC83, // cos(π/8 *  9)
-	-0x0B504, // cos(π/8 * 10)
-	-0x061F7, // cos(π/8 * 11)
+	-0x0B505, // cos(π/8 * 10)
+	-0x061F8, // cos(π/8 * 11)
 
 	+0x00000, // cos(π/8 * 12)
-	+0x061F7, // cos(π/8 * 13)
-	+0x0B504, // cos(π/8 * 14)
+	+0x061F8, // cos(π/8 * 13)
+	+0x0B505, // cos(π/8 * 14)
 	+0x0EC83, // cos(π/8 * 15)
 }
 
