@@ -1,4 +1,4 @@
-// Copyright 2025 The Wuffs Authors.
+// Copyright 2026 The Wuffs Authors.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -8,7 +8,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-package lowleveljpeg
+// ----------------
+
+// Package lowleveldct4x4 provides DCT (Discrete Cosine Transform) operations
+// on 4×4 blocks of uint8 or int16 values.
+//
+// It provides a subset of the sibling github.com/google/wuffs/lib/lowleveljpeg
+// package's functionality, except that it operates on 4×4 blocks instead of
+// JPEG's 8×8 blocks.
+package lowleveldct4x4
+
+// ----------------
+
+// This file is essentially a copy-and-paste of lowleveljpeg's block.go, after
+// adjusting from 8×8 to 4×4.
+
+// ----------------
 
 // ifElse is like C's (condition ? whenTrue : whenFalse) expression.
 func ifElse(condition bool, whenTrue int64, whenFalse int64) int64 {
@@ -20,8 +35,7 @@ func ifElse(condition bool, whenTrue int64, whenFalse int64) int64 {
 
 const (
 	fmtHex = "0123456789ABCDEF"
-	fmtSep = "       \n"         // 7 spaces and then a new line.
-	fmtS16 = "               \n" // 15 spaces and then a new line.
+	fmtSep = "   \n" // 3 spaces and then a new line.
 )
 
 const (
@@ -34,20 +48,20 @@ const (
 	BlockI16NeutralValue = 0
 )
 
-// BlockU8 is an 8×8 block of uint8 values, such as a block of red, green, blue
+// BlockU8 is a 4×4 block of uint8 values, such as a block of red, green, blue
 // or gray pixel values.
 //
 // It is indexed in XY (not DCT) space. If b is a BlockU8 then b[0] is the
-// top-left corner and b[8] is one pixel below that.
-type BlockU8 [64]uint8
+// top-left corner and b[4] is one pixel below that.
+type BlockU8 [16]uint8
 
 // String returns b in human-readable form.
 func (b BlockU8) String() string {
-	buf := [64 * 3]byte{}
+	buf := [16 * 3]byte{}
 	for i, value := range b {
 		buf[(3*i)+0] = fmtHex[15&(value>>0x04)]
 		buf[(3*i)+1] = fmtHex[15&(value>>0x00)]
-		buf[(3*i)+2] = fmtSep[7&i]
+		buf[(3*i)+2] = fmtSep[3&i]
 	}
 	return string(buf[:])
 }
@@ -78,30 +92,30 @@ func (dst *BlockI16) ForwardDCTFrom(src *BlockU8) {
 	}
 
 	// Convert from uint8 to int64, applying an 0x80 bias.
-	srcI64 := [64]int64{}
+	srcI64 := [16]int64{}
 	for i, v := range src {
 		srcI64[i] = int64(v) - 0x80
 	}
 
 	// Iterate in DCT space (outer) and XY space (inner).
-	for v := 0; v < 8; v++ {
-		halfAlphaV16 := ifElse(v == 0, fixedPointInv2Sqrt2, fixedPointHalf)
-		for u := 0; u < 8; u++ {
-			halfAlphaU16 := ifElse(u == 0, fixedPointInv2Sqrt2, fixedPointHalf)
+	for v := 0; v < 4; v++ {
+		halfAlphaV16 := ifElse(v == 0, fixedPointHalf, fixedPointInvSqrt2)
+		for u := 0; u < 4; u++ {
+			halfAlphaU16 := ifElse(u == 0, fixedPointHalf, fixedPointInvSqrt2)
 			// alphas32 is two 16.16 fixed point values multiplied together, as
 			// a 32.32 fixed point value.
 			alphas32 := halfAlphaV16 * halfAlphaU16
 			sum32 := int64(0)
 
-			for y := 0; y < 8; y++ {
-				for x := 0; x < 8; x++ {
+			for y := 0; y < 4; y++ {
+				for x := 0; x < 4; x++ {
 					// c32 is two 16.16 fixed point values multiplied together,
 					// as a 32.32 fixed point value.
 					//
 					// sum32 accumulates a 32.32 fixed point value.
-					c32 := int64(cosines[(((2*x)+1)*u)&31]) *
-						int64(cosines[(((2*y)+1)*v)&31])
-					sum32 += srcI64[(8*y)+x] * c32
+					c32 := int64(cosines[(((2*x)+1)*u)&15]) *
+						int64(cosines[(((2*y)+1)*v)&15])
+					sum32 += srcI64[(4*y)+x] * c32
 				}
 			}
 
@@ -112,33 +126,33 @@ func (dst *BlockI16) ForwardDCTFrom(src *BlockU8) {
 
 			// Store alphasSum32 as 16.0 fixed point.
 			result0 := (alphasSum32 + (1 << 31)) >> 32
-			dst[(8*v)+u] = int16(result0)
+			dst[(4*v)+u] = int16(result0)
 		}
 	}
 }
 
-// BlockI16 is an 8×8 block of int16 values, such as a block of JPEG
-// coefficients.
+// BlockI16 is a 4×4 block of int16 values, such as a block of JPEG
+// coefficients (except that it's 4×4 instead of JPEG's 8×8).
 //
 // It is indexed in DCT (not XY) space. If b is a BlockI16 then b[0] is the DC
 // coefficient and every other element is an AC coefficient.
 //
-// The horizontal-only AC coefficients are b[1], b[2], ..., b[7], in order from
+// The horizontal-only AC coefficients are b[1], b[2], b[3], in order from
 // low-frequency to high-frequency.
 //
-// The vertical-only AC coefficients are b[8], b[16], ..., b[56], in order from
+// The vertical-only AC coefficients are b[4], b[8], b[12], in order from
 // low-frequency to high-frequency.
-type BlockI16 [64]int16
+type BlockI16 [16]int16
 
 // String returns b in human-readable form.
 func (b BlockI16) String() string {
-	buf := [64 * 5]byte{}
+	buf := [16 * 5]byte{}
 	for i, value := range b {
 		buf[(5*i)+0] = fmtHex[15&(value>>0x0C)]
 		buf[(5*i)+1] = fmtHex[15&(value>>0x08)]
 		buf[(5*i)+2] = fmtHex[15&(value>>0x04)]
 		buf[(5*i)+3] = fmtHex[15&(value>>0x00)]
-		buf[(5*i)+4] = fmtSep[7&i]
+		buf[(5*i)+4] = fmtSep[3&i]
 	}
 	return string(buf[:])
 }
@@ -184,20 +198,20 @@ func (dst *BlockU8) InverseDCTFrom(src *BlockI16) {
 	}
 
 	// Convert from int16 to int64.
-	srcI64 := [64]int64{}
+	srcI64 := [16]int64{}
 	for i, v := range src {
 		srcI64[i] = int64(v)
 	}
 
 	// Iterate in XY space (outer) and DCT space (inner).
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
 			alphasSum32 := int64(0)
 
-			for v := 0; v < 8; v++ {
-				halfAlphaV16 := ifElse(v == 0, fixedPointInv2Sqrt2, fixedPointHalf)
-				for u := 0; u < 8; u++ {
-					halfAlphaU16 := ifElse(u == 0, fixedPointInv2Sqrt2, fixedPointHalf)
+			for v := 0; v < 4; v++ {
+				halfAlphaV16 := ifElse(v == 0, fixedPointHalf, fixedPointInvSqrt2)
+				for u := 0; u < 4; u++ {
+					halfAlphaU16 := ifElse(u == 0, fixedPointHalf, fixedPointInvSqrt2)
 					// alphas16 is two 16.16 fixed point values multiplied
 					// together, as a 48.16 fixed point value.
 					alphas16 := ((halfAlphaV16 * halfAlphaU16) + (1 << 15)) >> 16
@@ -208,16 +222,16 @@ func (dst *BlockU8) InverseDCTFrom(src *BlockI16) {
 					// c16 is c32 as a 48.16 fixed point value.
 					//
 					// alphasSum32 accumulates a 32.32 fixed point value.
-					c32 := int64(cosines[(((2*x)+1)*u)&31]) *
-						int64(cosines[(((2*y)+1)*v)&31])
+					c32 := int64(cosines[(((2*x)+1)*u)&15]) *
+						int64(cosines[(((2*y)+1)*v)&15])
 					c16 := (c32 + (1 << 15)) >> 16
-					alphasSum32 += srcI64[(8*v)+u] * (alphas16 * c16)
+					alphasSum32 += srcI64[(4*v)+u] * (alphas16 * c16)
 				}
 			}
 
 			// Store alphasSum32, biased and clamped, as 8.0 fixed point.
 			result0 := (alphasSum32 + (1 << 31)) >> 32
-			dst[(8*y)+x] = biasAndClamp[result0&1023]
+			dst[(4*y)+x] = biasAndClamp[result0&1023]
 		}
 	}
 }
@@ -227,95 +241,52 @@ func (dst *BlockU8) InverseDCTFrom(src *BlockI16) {
 // ForwardDCTFrom always returns or sets a BlockI16 that IsValid.
 //
 // Specifically:
-//   - a  DC element is out of range when outside [-1024, +1023].
-//   - an AC element is out of range when outside [-1023, +1023].
+//   - a  DC element is out of range when outside [-512, +511].
+//   - an AC element is out of range when outside [-511, +511].
 //
 // A BlockI16 is valid when none of its elements are out of range.
 func (b *BlockI16) IsValid() bool {
 	if b == nil {
 		return false
 	}
-	if (b[0] < -1024) || (+1023 < b[0]) {
+	if (b[0] < -512) || (+511 < b[0]) {
 		return false
 	}
 	for _, v := range b[1:] {
-		if (v < -1023) || (+1023 < v) {
+		if (v < -511) || (+511 < v) {
 			return false
 		}
 	}
 	return true
 }
 
-// QuadBlockU8 is like a BlockU8 but it is 16×16 instead of 8×8.
-//
-// It is indexed in XY (not DCT) space. If b is a QuadBlockU8 then b[0] is the
-// top-left corner and b[16] is one pixel below that.
-type QuadBlockU8 [256]uint8
-
-// String returns b in human-readable form.
-func (b QuadBlockU8) String() string {
-	buf := [256 * 3]byte{}
-	for i, value := range b {
-		buf[(3*i)+0] = fmtHex[15&(value>>0x04)]
-		buf[(3*i)+1] = fmtHex[15&(value>>0x00)]
-		buf[(3*i)+2] = fmtS16[15&i]
-	}
-	return string(buf[:])
-}
-
-// SetToNeutral sets each element to BlockU8NeutralValue.
-func (b *QuadBlockU8) SetToNeutral() {
-	if b == nil {
-		return
-	}
-	for i := range b {
-		b[i] = BlockU8NeutralValue
-	}
-}
-
-// These are "1 / 2" and  "1 / (2 * √2)" as 16.16 fixed point values.
+// These are "1 / √2" and  "1 / 2" as 16.16 fixed point values.
 const (
-	fixedPointHalf      = +0x8000
-	fixedPointInv2Sqrt2 = +0x5A82
+	fixedPointInvSqrt2 = +0xB504
+	fixedPointHalf     = +0x8000
 )
 
 // cosines is a cosine table as 16.16 fixed point values.
 var cosines = [32]int32{
-	+0x10000, // cos(π/16 *  0)
-	+0x0FB14, // cos(π/16 *  1)
-	+0x0EC83, // cos(π/16 *  2)
-	+0x0D4DB, // cos(π/16 *  3)
-	+0x0B504, // cos(π/16 *  4)
-	+0x08E39, // cos(π/16 *  5)
-	+0x061F7, // cos(π/16 *  6)
-	+0x031F1, // cos(π/16 *  7)
+	+0x10000, // cos(π/8 *  0)
+	+0x0EC83, // cos(π/8 *  1)
+	+0x0B504, // cos(π/8 *  2)
+	+0x061F7, // cos(π/8 *  3)
 
-	+0x00000, // cos(π/16 *  8)
-	-0x031F1, // cos(π/16 *  9)
-	-0x061F7, // cos(π/16 * 10)
-	-0x08E39, // cos(π/16 * 11)
-	-0x0B504, // cos(π/16 * 12)
-	-0x0D4DB, // cos(π/16 * 13)
-	-0x0EC83, // cos(π/16 * 14)
-	-0x0FB14, // cos(π/16 * 15)
+	+0x00000, // cos(π/8 *  4)
+	-0x061F7, // cos(π/8 *  5)
+	-0x0B504, // cos(π/8 *  6)
+	-0x0EC83, // cos(π/8 *  7)
 
-	-0x10000, // cos(π/16 * 16)
-	-0x0FB14, // cos(π/16 * 17)
-	-0x0EC83, // cos(π/16 * 18)
-	-0x0D4DB, // cos(π/16 * 19)
-	-0x0B504, // cos(π/16 * 20)
-	-0x08E39, // cos(π/16 * 21)
-	-0x061F7, // cos(π/16 * 22)
-	-0x031F1, // cos(π/16 * 23)
+	-0x10000, // cos(π/8 *  8)
+	-0x0EC83, // cos(π/8 *  9)
+	-0x0B504, // cos(π/8 * 10)
+	-0x061F7, // cos(π/8 * 11)
 
-	+0x00000, // cos(π/16 * 24)
-	+0x031F1, // cos(π/16 * 25)
-	+0x061F7, // cos(π/16 * 26)
-	+0x08E39, // cos(π/16 * 27)
-	+0x0B504, // cos(π/16 * 28)
-	+0x0D4DB, // cos(π/16 * 29)
-	+0x0EC83, // cos(π/16 * 30)
-	+0x0FB14, // cos(π/16 * 31)
+	+0x00000, // cos(π/8 * 12)
+	+0x061F7, // cos(π/8 * 13)
+	+0x0B504, // cos(π/8 * 14)
+	+0x0EC83, // cos(π/8 * 15)
 }
 
 // biasAndClamp[x & 1023] is (x + 0x80), clamped to the range [0x00, 0xFF], for
