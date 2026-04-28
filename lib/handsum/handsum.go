@@ -421,15 +421,10 @@ func Decode(r io.Reader) (image.Image, error) {
 	bitOffset = decodeBlock(lumaQuadBlockU8[0x88:], 16, &buf, bitOffset, q.numberOfCoefficients())
 	smoothBlockSeams16x16(&lumaQuadBlockU8)
 
-	src := image.Image(nil)
-	if c == 0 {
-		src = &image.Gray{
-			Pix:    lumaQuadBlockU8[:],
-			Stride: 16,
-			Rect:   image.Rectangle{Max: image.Point{X: 16, Y: 16}},
-		}
+	cbQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
+	crQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
 
-	} else {
+	if c != 0 {
 		cbBlockU8 := lowleveljpeg.BlockU8{}
 		crBlockU8 := lowleveljpeg.BlockU8{}
 
@@ -438,26 +433,12 @@ func Decode(r io.Reader) (image.Image, error) {
 		scaleAndBiasChromaDown(&cbBlockU8)
 		scaleAndBiasChromaDown(&crBlockU8)
 
-		cbQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
 		cbQuadBlockU8.UpsampleFrom(&cbBlockU8)
-		crQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
 		crQuadBlockU8.UpsampleFrom(&crBlockU8)
-
-		src = &image.YCbCr{
-			Y:              lumaQuadBlockU8[:],
-			Cb:             cbQuadBlockU8[:],
-			Cr:             crQuadBlockU8[:],
-			YStride:        16,
-			CStride:        16,
-			SubsampleRatio: image.YCbCrSubsampleRatio444,
-			Rect:           image.Rectangle{Max: image.Point{X: 16, Y: 16}},
-		}
 	}
 
 	dstW, dstH := decodeWidthAndHeight(buf[2])
-	dst := image.NewRGBA(image.Rectangle{Max: image.Point{X: dstW, Y: dstH}})
-	draw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
-	return dst, nil
+	return finishDecode(dstW, dstH, c == 0, &lumaQuadBlockU8, &cbQuadBlockU8, &crQuadBlockU8), nil
 }
 
 func decodeWidthAndHeight(buf2 byte) (w int, h int) {
@@ -580,6 +561,145 @@ func decodeBlockQ3(dst []byte, stride int, buf *[fileSizeMax]byte, bitOffset int
 	}
 
 	return bitOffset
+}
+
+func finishDecode(w int, h int, gray bool, yy *lowleveljpeg.QuadBlockU8, cb *lowleveljpeg.QuadBlockU8, cr *lowleveljpeg.QuadBlockU8) image.Image {
+	tmp := [1024]byte{}
+
+	if gray {
+		for i := range 256 {
+			tmp[(4 * i)] = yy[i]
+		}
+	} else {
+		for i := range 256 {
+			tmp[(4*i)+0], tmp[(4*i)+1], tmp[(4*i)+2] =
+				color.YCbCrToRGB(yy[i], cb[i], cr[i])
+			tmp[(4*i)+3] = 0xFF
+		}
+	}
+
+	pix := tmp[:]
+	if w < 16 {
+		pix = scaleHorizontal(&tmp, uint32(w))
+	} else if h < 16 {
+		pix = scaleVertical(&tmp, uint32(h))
+	}
+
+	if gray {
+		return &image.Gray{
+			Pix:    convertYxxxToY(pix),
+			Stride: w,
+			Rect:   image.Rect(0, 0, w, h),
+		}
+	}
+
+	return &image.RGBA{
+		Pix:    pix,
+		Stride: 4 * w,
+		Rect:   image.Rect(0, 0, w, h),
+	}
+}
+
+func scaleHorizontal(src *[1024]byte, w uint32) []byte {
+	dst := make([]byte, 64*w)
+
+	for y := range 16 {
+		dstx := 0
+		acc0 := uint32(0)
+		acc1 := uint32(0)
+		acc2 := uint32(0)
+		remainder := uint32(16)
+		for srcx := range 16 {
+			si := (64 * y) + (4 * srcx)
+			s0 := uint32(src[si+0])
+			s1 := uint32(src[si+1])
+			s2 := uint32(src[si+2])
+
+			if remainder > w {
+				remainder -= w
+				acc0 += w * s0
+				acc1 += w * s1
+				acc2 += w * s2
+
+			} else {
+				acc0 += remainder * s0
+				acc1 += remainder * s1
+				acc2 += remainder * s2
+
+				di := (4 * int(w) * y) + (4 * dstx)
+				dst[di+0] = uint8((acc0 + 8) / 16)
+				dst[di+1] = uint8((acc1 + 8) / 16)
+				dst[di+2] = uint8((acc2 + 8) / 16)
+				dst[di+3] = 0xFF
+				dstx++
+
+				partial := w - remainder
+
+				acc0 = partial * s0
+				acc1 = partial * s1
+				acc2 = partial * s2
+
+				remainder = 16 - partial
+			}
+		}
+	}
+
+	return dst
+}
+
+func scaleVertical(src *[1024]byte, h uint32) []byte {
+	dst := make([]byte, 64*h)
+
+	for x := range 16 {
+		dsty := 0
+		acc0 := uint32(0)
+		acc1 := uint32(0)
+		acc2 := uint32(0)
+		remainder := uint32(16)
+		for srcy := range 16 {
+			si := (64 * srcy) + (4 * x)
+			s0 := uint32(src[si+0])
+			s1 := uint32(src[si+1])
+			s2 := uint32(src[si+2])
+
+			if remainder > h {
+				remainder -= h
+				acc0 += h * s0
+				acc1 += h * s1
+				acc2 += h * s2
+
+			} else {
+				acc0 += remainder * s0
+				acc1 += remainder * s1
+				acc2 += remainder * s2
+
+				di := (64 * dsty) + (4 * x)
+				dst[di+0] = uint8((acc0 + 8) / 16)
+				dst[di+1] = uint8((acc1 + 8) / 16)
+				dst[di+2] = uint8((acc2 + 8) / 16)
+				dst[di+3] = 0xFF
+				dsty++
+
+				partial := h - remainder
+
+				acc0 = partial * s0
+				acc1 = partial * s1
+				acc2 = partial * s2
+
+				remainder = 16 - partial
+			}
+		}
+	}
+
+	return dst
+}
+
+func convertYxxxToY(pix []byte) []byte {
+	ret := make([]byte, len(pix)/4)
+	for i := range ret {
+		ret[i] = pix[4*i]
+	}
+	return ret
 }
 
 // zigzag8 represents JPEG's zig-zag order for visiting DCT coefficients.
