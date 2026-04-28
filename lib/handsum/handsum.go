@@ -13,49 +13,57 @@
 // Package handsum implements the Handsum image file format.
 //
 // This is a very lossy format for very small thumbnails. Very small in terms
-// of image dimensions, up to 32×32 pixels, but also in terms of file size.
+// of image dimensions, up to 16×16 pixels, but also in terms of file size.
 //
-// The file format has four variants, combining two quality settings (P is
-// Potato, X is Extremely Potato) and two color settings (C is Color, G is
-// Gray). Each Handsum Variant (named HV??) is a fixed number of bytes:
+// The file format has two color settings (Gray and RGB) and four quality
+// settings. For any given color-and-quality combination, every Handsum image
+// file with those settings is a fixed number of bytes. For color=Gray:
 //
-//   - The HVPC variant is 147 bytes long.
-//   - The HVPG variant is  99 bytes long.
-//   - The HVXC variant is  48 bytes long.
-//   - The HVXG variant is  33 bytes long.
+//   - A quality=0 file is  33 bytes long.
+//   - A quality=1 file is  51 bytes long.
+//   - A quality=2 file is  83 bytes long.
+//   - A quality=3 file is  99 bytes long.
 //
-// For example, every HVXC image file is exactly 48 bytes (384 bits) long. For
-// a 32×32 pixel image, this uses 0.375 bits (0.046875 bytes) per pixel.
+// For color=RGB:
 //
-// HVPC (P for Potato, not X for Extremely Potato), always 147 bytes, uses
-// 1.1484375 bits per pixel for a 32×32 pixel image (a 1:1 aspect ratio), or
-// 1.53125 bits per pixel for a 32×24 pixel image (a 4:3 aspect ratio).
+//   - A quality=0 file is  48 bytes long.
+//   - A quality=1 file is  75 bytes long.
+//   - A quality=2 file is 123 bytes long.
+//   - A quality=3 file is 147 bytes long.
+//
+// Every Gray/q0 image file is exactly 48 bytes (384 bits) long. For a 16×16
+// pixel image, this uses 1.5 bits (0.1875 bytes) per pixel.
+//
+// Every RGB/q3 image file is exactly 147 bytes (1176 bits) long. This uses
+// 4.59375 bits per pixel for a 16×16 pixel image (a 1:1 aspect ratio), or
+// 6.125 bits per pixel for a 16×12 pixel image (a 4:3 aspect ratio).
 //
 // A Handsum file's starts with a 3 byte header: a 16-bit magic signature, a
-// 2-bit variant and a 6-bit aspect ratio. An image's longest dimension (width
-// or height) is 32 pixels and the aspect ratio gives the shorter dimension.
+// 1-bit color, a 2-bit quality and a 5-bit aspect ratio. An image's longest
+// dimension (width or height) is 16 pixels and the aspect ratio gives the
+// shorter dimension.
 //
-// The C (Color) payload, after the header, holds a scaled 16×16 pixel YCbCr
+// The color=RGB payload, after the header, holds a scaled 16×16 pixel YCbCr
 // 4:2:0 JPEG MCU (Minimum Coded Unit), 4 Luma and 2 Chroma blocks. Each block
 // is 8×8 pixels.
 //
-// The G (Gray) payload is just the C payload with the 4 Luma blocks but
-// without the 2 Chroma blocks. This drops the final 48 (for P, Potato) or 15
-// (for X, Extremely Potato) bytes from the C variant's encoding.
+// The color=RGB payload ends with 2 Chroma blocks in 15, 24, 40 or 48 bytes
+// (depending on the quality setting). For a grayscale image, the encoded
+// Chroma blocks' bytes are all 0x88, and the color=Gray payload is just the 4
+// Luma blocks without explicitly recording the 2 Chroma blocks.
 //
-// P (Potato) splits the MCU into 8×8 pixel blocks and further splits each
-// block into 2×2 pixel mini-blocks. DCT (Discrete Cosine Transform) is applied
-// to each mini-block, producing 4 DCT coefficients. Only the 3 lowest
-// frequency DCT coefficients are kept.
+// Each 8×8 block is sub-divided into 8×8 (for q0), 4×4 (for q1 and q2) or 2×2
+// (for q3) tiles. DCT (Discrete Cosine Transform) is applied to each tile,
+// producing 64, 16, 16 or 4 DCT coefficients (depending on the quality). Only
+// the 15 (out of 64), 6 (out of 16), 10 (out of 16) or 3 (out of 4) lowest
+// frequency DCT coefficients are kept for each tile. Lowest frequency means
+// the top-left corner in the usual visualization of JPEG's zig-zag ordering.
 //
-// X (Extremely Potato) splits the MCU into 8×8 pixel blocks. DCT is applied to
-// each block, producing 64 DCT coefficients, just like JPEG. Only the 15
-// lowest frequency DCT coefficients are kept. Lowest frequency means the
-// top-left corner in the usual visualization of JPEG's zig-zag ordering.
+// In percentage terms, the quality setting keeps 23%, 38%, 63% or 75% of the
+// 64 DCT coefficients in each 8×8 block.
 //
-// Either way, P or X, each DCT coefficient is encoded as one nibble (4 bits;
-// half a byte) with fixed bias and quantization factors. Each 8×8 pixel block
-// encodes in 48 (P) or 15 (X) nibbles.
+// Each DCT coefficient is encoded as one nibble (4 bits) with fixed bias and
+// quantization factors.
 //
 // All Handsum images use the sRGB color profile.
 //
@@ -65,66 +73,68 @@
 // Thumbhash. "Handsum" also sounds like "handsome", meaning "good looking".
 package handsum
 
+// When decoding, each nibble produces a DCT coefficient according to a simple
+// linear formula, with different parameters (the linear slope and intercept)
+// depending on DC vs AC coefficients and on the quality setting (whether the
+// tiles are 8×8, 4×4 or 2×2):
+//
+// ======    ======== DC ========    ======== AC ========
+// Bucket      q0   q1,q2      q3      q0   q1,q2      q3
+//
+// 0x0      -1024    -512    -256    -512    -256    -128
+// 0x1       -888    -444    -222    -448    -224    -112
+// 0x2       -752    -376    -188    -384    -192     -96
+// 0x3       -616    -308    -154    -320    -160     -80
+// ...        ...     ...     ...     ...     ...     ...
+// 0x7        -72     -36     -18     -64     -32     -16
+// 0x8        +64     +32     +16       0       0       0
+// 0x9       +200    +100     +50     +64     +32     +16
+// ...        ...     ...     ...     ...     ...     ...
+// 0xE       +880    +440    +220    +384    +192     +96
+// 0xF      +1016    +508    +254    +448    +224    +112
+//
+// Width     0x88    0x44    0x22    0x40    0x20    0x10
+// TileSize     8       4       2       8       4       2
+// ======    ======== DC ========    ======== AC ========
+//
+// DC bucket widths are multiples of 0x11, not 0x10 with bucket=0x8 mapping to
+// zero, so that an input tile that is pure black (luma=0x00) or pure white
+// (luma=0xFF) can round-trip losslessly (as bucket 0x0 or bucket 0xF). AC maps
+// bucket=0x8 to zero, so that a uniformly-valued tile (all-0x00, all-0x11,
+// all-0x22, ..., all-0xFF) can again round-trip losslessly.
+//
+// This encoder uses smaller bucket widths for the AC coefficients, compared to
+// those used when decoding (42, 18, 8 instead of 64, 32, 16). This adjustment
+// is arbitrary but the results seem a little more vibrant. It also compensates
+// somewhat for the mean-reversion (gray-reversion) from the decoder's seam
+// smoothing, a localized blur that mitigates artifacts at tile boundaries.
+//
+// Luma values can span the full range [0x00, 0xFF] but decoded Chroma values
+// are restricted to a narrower range [0x3C, 0xBB], as extreme Chroma values
+// are rare in practice. The latter range has a slight bias (not centred on the
+// neutral 0x80) so that the Chroma DC components of a neutral gray image can
+// round-trip losslessly (in the 0x8 bucket). Chroma is narrowed (after Inverse
+// DCT) on decode and so is widened (before Forward DCT) on encode. Luma and
+// wide-Chroma then use the same DCT buckets.
+
 import (
 	"errors"
 	"image"
 	"image/color"
 	"io"
 
+	"github.com/google/wuffs/lib/lowleveldct4x4"
 	"github.com/google/wuffs/lib/lowleveljpeg"
 
 	"golang.org/x/image/draw"
 )
 
-// Variant represents one of the Handsum file format's four variants.
-//
-// The zero value means unknown (before decoding) or to use the default option
-// (when encoding).
-type Variant uint8
-
-const (
-	VariantExtremelyPotatoGray  = Variant(1)
-	VariantExtremelyPotatoColor = Variant(2)
-	VariantPotatoGray           = Variant(3)
-	VariantPotatoColor          = Variant(4)
-)
-
-func (v Variant) isExtremelyPotato() bool { return v <= VariantExtremelyPotatoColor }
-func (v Variant) isGray() bool            { return (v & 1) != 0 }
-func (v Variant) numberOfBlocks() int     { return 6 - (2 * int(v&1)) }
-
-func (v Variant) fileSize() int {
-	switch v {
-	case VariantExtremelyPotatoGray:
-		return FileSizeHVXG
-	case VariantExtremelyPotatoColor:
-		return FileSizeHVXC
-	case VariantPotatoGray:
-		return FileSizeHVPG
-	}
-	return FileSizeHVPC
-}
-
-const (
-	// FileSizeHVXG is the size (in bytes) of every HVXG Handsum image file.
-	FileSizeHVXG = 33
-	// FileSizeHVXC is the size (in bytes) of every HVXC Handsum image file.
-	FileSizeHVXC = 48
-	// FileSizeHVPG is the size (in bytes) of every HVPG Handsum image file.
-	FileSizeHVPG = 99
-	// FileSizeHVPC is the size (in bytes) of every HVPC Handsum image file.
-	FileSizeHVPC = 147
-
-	fileSizeHeader = 3
-	fileSizeMax    = 147
-)
-
 // MaxDimension is the maximum (inclusive) width or height of every Handsum
 // image file.
 //
-// Every image is either (W × 32) or (32 × H) or both, for some positive W or H
-// that is no greater than 32.
-const MaxDimension = 32
+// Every image is either (W × 16) or (16 × H) or both, for some positive W or H
+// that is no greater than 16.
+const MaxDimension = 16
 
 // Magic is the byte string prefix of every Handsum image file.
 //
@@ -140,19 +150,89 @@ var (
 	ErrNotAHandsumFile = errors.New("handsum: not a handsum file")
 )
 
-// EncodeOptions are optional arguments to Encode. The zero value is valid and
-// means to use the default configuration.
-type EncodeOptions struct {
-	// Variant is which of the four Handsum Variants to use. If zero, the
-	// default is HVPC (Handsum Variant Potato Color).
-	Variant Variant
+const (
+	fileSizeHeader = 3
+	fileSizeMax    = 147
+)
+
+func fileSize(c Color, q Quality) int {
+	// 33, 51, 83, 99.   48, 75, 123, 147.
+	return int("\x21\x33\x53\x63\x30\x4B\x7B\x93"[(int(c&1)<<2)|int(q&3)])
 }
 
-func (o *EncodeOptions) variant() Variant {
-	if (o != nil) && (1 <= o.Variant) && (o.Variant <= 4) {
-		return o.Variant
+// Color is a Handsum image's color setting, either 0 (Gray) or 1 (RGB).
+type Color uint8
+
+const (
+	ColorGray = Color(0)
+	ColorRGB  = Color(1)
+)
+
+func (c Color) numberOfBlocks() int {
+	return int("\x04\x06"[c&1])
+}
+
+// OptionColor is an option type, what Rust would call an Option<Color>.
+type OptionColor struct {
+	representation uint8
+}
+
+// MakeOptionColor returns an option value that is Some(c), instead of the
+// OptionColor zero-value, which is None.
+func MakeOptionColor(c Color) OptionColor {
+	return OptionColor{representation: 0x80 | uint8(c)}
+}
+
+// Quality is a Handsum image's quality setting, from 0 (worst) to 3 (best).
+type Quality uint8
+
+const (
+	QualityWorst      = Quality(0)
+	QualityMediumLow  = Quality(1)
+	QualityMediumHigh = Quality(2)
+	QualityBest       = Quality(3)
+)
+
+func (q Quality) numberOfCoefficients() int {
+	// 15 (out of 64), 6 (out of 16), 10 (out of 16), 3 (out of 4).
+	return int("\x0F\x06\x0A\x03"[q&3])
+}
+
+// OptionQuality is an option type, what Rust would call an Option<Quality>.
+type OptionQuality struct {
+	representation uint8
+}
+
+// MakeOptionQuality returns an option value that is Some(q), instead of the
+// OptionQuality zero-value, which is None.
+func MakeOptionQuality(q Quality) OptionQuality {
+	return OptionQuality{representation: 0x80 | uint8(q)}
+}
+
+// EncodeOptions are optional arguments to Encode. The zero value is valid and
+// means to use the default configuration, encoding to 147 bytes.
+type EncodeOptions struct {
+	// Color is the color setting. The None option (the zero OptionColor value)
+	// means to use the default, ColorRGB.
+	Color OptionColor
+
+	// Quality is the quality-versus-file-size setting. The None option (the
+	// zero OptionQuality value) means to use the default, QualityBest.
+	Quality OptionQuality
+}
+
+func (o *EncodeOptions) color() Color {
+	if (o != nil) && ((o.Color.representation & 0x80) != 0) {
+		return Color(o.Color.representation & 0x01)
 	}
-	return VariantPotatoColor
+	return ColorRGB
+}
+
+func (o *EncodeOptions) quality() Quality {
+	if (o != nil) && ((o.Quality.representation & 0x80) != 0) {
+		return Quality(o.Quality.representation & 0x03)
+	}
+	return QualityBest
 }
 
 // Encode writes src to w in the Handsum format.
@@ -168,19 +248,19 @@ func Encode(w io.Writer, src image.Image, options *EncodeOptions) error {
 		return ErrBadArgument
 	}
 
-	aspectRatio := byte(0x1F)
+	aspectRatio := byte(0x0F)
 	if srcW > srcH { // Landscape.
-		a := ((int64(srcH) * 64) + int64(srcW)) / (2 * int64(srcW))
+		a := ((int64(srcH) * 32) + int64(srcW)) / (2 * int64(srcW))
 		if a <= 0 {
 			a = 1
 		}
 		aspectRatio = byte(a-1) | 0x00
 	} else if srcW < srcH { // Portrait.
-		a := ((int64(srcW) * 64) + int64(srcH)) / (2 * int64(srcH))
+		a := ((int64(srcW) * 32) + int64(srcH)) / (2 * int64(srcH))
 		if a <= 0 {
 			a = 1
 		}
-		aspectRatio = byte(a-1) | 0x20
+		aspectRatio = byte(a-1) | 0x10
 	}
 
 	dst := image.NewRGBA(image.Rectangle{Max: image.Point{X: 16, Y: 16}})
@@ -189,144 +269,112 @@ func Encode(w io.Writer, src image.Image, options *EncodeOptions) error {
 	dstU8s := lowleveljpeg.Array6BlockU8{}
 	dstU8s.ExtractFrom(dst, 0, 0)
 
-	v := options.variant()
+	// Biasing the Chroma blocks by +8 shifts the neutral (gray) Chroma values
+	// from 0x80 to 0x88. DC coefficient bias-and-quantization can losslessly
+	// encode a block whose elements are a uniform multiple of 0x11.
+	scaleAndBiasChromaUp(&dstU8s[4])
+	scaleAndBiasChromaUp(&dstU8s[5])
+
+	c := options.color()
+	q := options.quality()
 	buf := [fileSizeMax]byte{}
 	buf[0] = Magic[0]
 	buf[1] = Magic[1]
-	buf[2] = aspectRatio | ((uint8(v) - 1) << 6)
+	buf[2] = ((uint8(c)) << 7) | ((uint8(q)) << 5) | aspectRatio
 
 	bitOffset := 3 * 8
-	if v.isExtremelyPotato() {
-		dstI16s := lowleveljpeg.Array6BlockI16{}
-		dstI16s.ForwardDCTFrom(&dstU8s)
-		for i := range v.numberOfBlocks() {
-			bitOffset = encodeXBlock(&buf, bitOffset, &dstI16s[i])
-		}
-	} else {
-		// Biasing the Chroma blocks by +8 shifts the neutral (gray) Chroma
-		// values from 0x80 to 0x88. encodePBlock's DC coefficient quantization
-		// can encode multiples of 0x11 losslessly.
-		biasUp(&dstU8s[4])
-		biasUp(&dstU8s[5])
-		for i := range v.numberOfBlocks() {
-			bitOffset = encodePBlock(&buf, bitOffset, &dstU8s[i])
-		}
+	encodeBlock := encodeBlockFuncs[q]
+	for i := range c.numberOfBlocks() {
+		bitOffset = encodeBlock(&buf, bitOffset, &dstU8s[i], q.numberOfCoefficients())
 	}
 
 	_, err := w.Write(buf[:bitOffset/8])
 	return err
 }
 
-func encodePBlock(buf *[fileSizeMax]byte, bitOffset int, b *lowleveljpeg.BlockU8) int {
+type encodeBlockFunc func(buf *[fileSizeMax]byte, bitOffset int, src *lowleveljpeg.BlockU8, nCoeffs int) int
+
+var encodeBlockFuncs = [4]encodeBlockFunc{
+	encodeBlockQ0,
+	encodeBlockQ1,
+	encodeBlockQ1,
+	encodeBlockQ3,
+}
+
+func encodeBlockQ0(buf *[fileSizeMax]byte, bitOffset int, src *lowleveljpeg.BlockU8, nCoeffs int) int {
+	f8 := src.ForwardDCT()
+
+	for _, z := range zigzag8 {
+		v := int32(f8[z])
+		if z == 0 {
+			v = (v + 1024 + 0x44) / 0x88
+		} else {
+			v = (v + (8.5 * 42)) / 42
+		}
+		buf[bitOffset>>3] |= nibblify(v) << (bitOffset & 4)
+		bitOffset += 4
+	}
+
+	return bitOffset
+}
+
+func encodeBlockQ1(buf *[fileSizeMax]byte, bitOffset int, src *lowleveljpeg.BlockU8, nCoeffs int) int {
+	for i := range 4 {
+		x4 := (i & 1) << 2  // The sequence 0, 4, 0, 4.
+		y4 := (i & 2) << 1  // The sequence 0, 0, 4, 4.
+		o4 := (8 * y4) + x4 // The sequence 0, 4, 32, 36.
+
+		b4 := extract4x4Tile(src, o4)
+		f4 := b4.ForwardDCT()
+
+		for _, z := range zigzag4[:nCoeffs] {
+			v := int32(f4[z])
+			if z == 0 {
+				v = (v + 512 + 0x22) / 0x44
+			} else {
+				v = (v + (8.5 * 18)) / 18
+			}
+			buf[bitOffset>>3] |= nibblify(v) << (bitOffset & 4)
+			bitOffset += 4
+		}
+	}
+
+	return bitOffset
+}
+
+func encodeBlockQ3(buf *[fileSizeMax]byte, bitOffset int, src *lowleveljpeg.BlockU8, nCoeffs int) int {
+	// We could import the lowleveldct2x2 package and call its ForwardDCT
+	// method (and InverseDCTFrom on decode), but it's easy to just inline it.
+
 	for i := range 16 {
 		x := 2 * (i & 3)
 		y := 2 * (i >> 2)
 		j := (8 * y) + x
 
-		b00 := int(b[j+0o00])
-		b01 := int(b[j+0o01])
-		b10 := int(b[j+0o10])
-		b11 := int(b[j+0o11])
+		s0 := int32(src[j+0]) - 0x80
+		s1 := int32(src[j+1]) - 0x80
+		s2 := int32(src[j+8]) - 0x80
+		s3 := int32(src[j+9]) - 0x80
 
-		// Compute the quantized DC coefficient.
-		//
-		// "(p + q + r + s + 2) >> 2" takes the average of four numbers,
-		// rounding properly. Shifting by (2 + 4) instead of by 2 quantizes the
-		// range [0x00, 0xFF] to [0x0, 0xF].
-		avgw := (+b00 + b01 + b10 + b11 + 2) >> 6
+		dct0 := (+s0 + s1 + s2 + s3 + 1) >> 1
+		dct1 := (+s0 - s1 + s2 - s3 + 1) >> 1
+		dct2 := (+s0 + s1 - s2 - s3 + 1) >> 1
 
-		// Compute the quantized AC coefficients: one horizontal and one
-		// vertical. These two lines are equivalent to:
-		//
-		// avgx := (((-b00 + b01 - b10 + b11 + 2) >> 2) + 2) >> 2
-		// avgy := (((-b00 - b01 + b10 + b11 + 2) >> 2) + 2) >> 2
-		//
-		// The inner "(foo + 2) >> 2" calculation is like taking an average.
-		//
-		// In theory, the outer calculation should be "(foo + 4) >> 3" instead
-		// of "(foo + 2) >> 2", since on the decode side, we multiply by 8.
-		// Scaling by 2 is an arbitrary adjustment that's not mirrored on the
-		// decode side, but the results seem a little more vibrant.
-		avgx := (-b00 + b01 - b10 + b11 + 10) >> 4
-		avgy := (-b00 - b01 + b10 + b11 + 10) >> 4
-
-		// Clip DC to [0, 15] and AC to [-8, +7]. Pack it in a nibble.
-		ew := max(0, min(15, avgw+0))
-		ex := max(0, min(15, avgx+8))
-		ey := max(0, min(15, avgy+8))
-
-		buf[bitOffset>>3] |= uint8(ew) << (bitOffset & 4)
+		v0 := (dct0 + 256 + 0x11) / 0x22
+		buf[bitOffset>>3] |= nibblify(v0) << (bitOffset & 4)
 		bitOffset += 4
-		buf[bitOffset>>3] |= uint8(ex) << (bitOffset & 4)
-		bitOffset += 4
-		buf[bitOffset>>3] |= uint8(ey) << (bitOffset & 4)
-		bitOffset += 4
-	}
-	return bitOffset
-}
 
-func encodeXBlock(buf *[fileSizeMax]byte, bitOffset int, b *lowleveljpeg.BlockI16) int {
-	for i := range nCoeffs {
-		e := uint8(0)
-		if i == 0 {
-			e = encodeXDC(b[0])
-		} else {
-			e = encodeXAC(b[zigzag[i]])
-		}
-		buf[bitOffset>>3] |= e << (bitOffset & 4)
+		v1 := (dct1 + (8.5 * 8)) / 8
+		buf[bitOffset>>3] |= nibblify(v1) << (bitOffset & 4)
+		bitOffset += 4
+
+		v2 := (dct2 + (8.5 * 8)) / 8
+		buf[bitOffset>>3] |= nibblify(v2) << (bitOffset & 4)
 		bitOffset += 4
 	}
 
 	return bitOffset
 }
-
-func encodeXDC(value int16) uint8 {
-	const w = dcBucketWidth
-
-	v := int32(value) + ((w * 8) + (w / 2))
-	v /= w
-	if v < 0x0 {
-		return 0x0
-	} else if v > 0xF {
-		return 0xF
-	}
-	return uint8(v)
-}
-
-func encodeXAC(value int16) uint8 {
-	// Scaling by 2 is an arbitrary adjustment that's not mirrored on the
-	// decode side, but the results seem a little more vibrant.
-	const w = acBucketWidth / 2
-
-	v := int32(value) + ((w * 8) + (w / 2))
-	v /= w
-	if v < 0x0 {
-		return 0x0
-	} else if v > 0xF {
-		return 0xF
-	}
-	return uint8(v)
-}
-
-// For X (Extremely Potato), both DC and AC coefficients are quantized into 16
-// buckets (4 bits), but they use different bucket widths:
-//
-//	Bucket    DC      AC
-//	0x0    -1024    -128
-//	0x1     -896    -112
-//	0x2     -768     -96
-//	0x3     -640     -80
-//	...       ...     ...
-//	0x7     -128     -16
-//	0x8        0       0
-//	0x9     +128     +16
-//	...       ...     ...
-//	0xE     +768     +96
-//	0xF     +896    +112
-const (
-	dcBucketWidth = 128
-	acBucketWidth = 16
-)
 
 // DecodeConfig reads a Handsum image configuration from r.
 func DecodeConfig(r io.Reader) (image.Config, error) {
@@ -336,9 +384,10 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return image.Config{}, ErrNotAHandsumFile
 	}
-	cm := color.RGBAModel
-	if v := Variant(buf[2]>>6) + 1; v.isGray() {
-		cm = color.GrayModel
+
+	cm := color.GrayModel
+	if (buf[2] & 0x80) != 0 {
+		cm = color.RGBAModel
 	}
 
 	w, h := decodeWidthAndHeight(buf[2])
@@ -357,25 +406,23 @@ func Decode(r io.Reader) (image.Image, error) {
 	} else if (buf[0] != Magic[0]) || (buf[1] != Magic[1]) {
 		return nil, ErrNotAHandsumFile
 	}
-	v := Variant(buf[2]>>6) + 1
-	if _, err := io.ReadFull(r, buf[fileSizeHeader:v.fileSize()]); err != nil {
+	c := Color(buf[2] >> 7)
+	q := Quality((buf[2] >> 5) & 0x03)
+	if _, err := io.ReadFull(r, buf[fileSizeHeader:fileSize(c, q)]); err != nil {
 		return nil, err
 	}
 
 	bitOffset := 3 * 8
-	decodeBlock := decodePBlock
-	if v.isExtremelyPotato() {
-		decodeBlock = decodeXBlock
-	}
+	decodeBlock := decodeBlockFuncs[q]
 	lumaQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
-	bitOffset = decodeBlock(lumaQuadBlockU8[0x00:], 16, &buf, bitOffset)
-	bitOffset = decodeBlock(lumaQuadBlockU8[0x08:], 16, &buf, bitOffset)
-	bitOffset = decodeBlock(lumaQuadBlockU8[0x80:], 16, &buf, bitOffset)
-	bitOffset = decodeBlock(lumaQuadBlockU8[0x88:], 16, &buf, bitOffset)
-	smoothLumaBlockSeams(&lumaQuadBlockU8)
+	bitOffset = decodeBlock(lumaQuadBlockU8[0x00:], 16, &buf, bitOffset, q.numberOfCoefficients())
+	bitOffset = decodeBlock(lumaQuadBlockU8[0x08:], 16, &buf, bitOffset, q.numberOfCoefficients())
+	bitOffset = decodeBlock(lumaQuadBlockU8[0x80:], 16, &buf, bitOffset, q.numberOfCoefficients())
+	bitOffset = decodeBlock(lumaQuadBlockU8[0x88:], 16, &buf, bitOffset, q.numberOfCoefficients())
+	smoothBlockSeams16x16(&lumaQuadBlockU8)
 
 	src := image.Image(nil)
-	if v.isGray() {
+	if c == 0 {
 		src = &image.Gray{
 			Pix:    lumaQuadBlockU8[:],
 			Stride: 16,
@@ -386,12 +433,10 @@ func Decode(r io.Reader) (image.Image, error) {
 		cbBlockU8 := lowleveljpeg.BlockU8{}
 		crBlockU8 := lowleveljpeg.BlockU8{}
 
-		bitOffset = decodeBlock(cbBlockU8[:], 8, &buf, bitOffset)
-		bitOffset = decodeBlock(crBlockU8[:], 8, &buf, bitOffset)
-		if v == VariantPotatoColor {
-			biasDown(&cbBlockU8)
-			biasDown(&crBlockU8)
-		}
+		bitOffset = decodeBlock(cbBlockU8[:], 8, &buf, bitOffset, q.numberOfCoefficients())
+		bitOffset = decodeBlock(crBlockU8[:], 8, &buf, bitOffset, q.numberOfCoefficients())
+		scaleAndBiasChromaDown(&cbBlockU8)
+		scaleAndBiasChromaDown(&crBlockU8)
 
 		cbQuadBlockU8 := lowleveljpeg.QuadBlockU8{}
 		cbQuadBlockU8.UpsampleFrom(&cbBlockU8)
@@ -416,55 +461,35 @@ func Decode(r io.Reader) (image.Image, error) {
 }
 
 func decodeWidthAndHeight(buf2 byte) (w int, h int) {
-	if (buf2 & 0x20) == 0 { // Landscape.
-		w = 32
-		h = 1 + int(buf2&0x1F)
+	if (buf2 & 0x10) == 0 { // Landscape.
+		w = 16
+		h = 1 + int(buf2&0x0F)
 	} else { // Portrait.
-		w = 1 + int(buf2&0x1F)
-		h = 32
+		w = 1 + int(buf2&0x0F)
+		h = 16
 	}
 	return w, h
 }
 
-func decodePBlock(dst []byte, stride int, src *[fileSizeMax]byte, bitOffset int) int {
-	for i := range 16 {
-		// Decode the quantized-by-0x11 DC coefficient, covering [0x00, 0xFF].
-		ew := int((src[bitOffset>>3] >> (bitOffset & 4)) & 15)
-		bitOffset += 4
+type decodeBlockFunc func(dst []byte, stride int, buf *[fileSizeMax]byte, bitOffset int, nCoeffs int) int
 
-		// Decode the quantized-by-8 AC coefficients, covering [-64, +56]. The
-		// -8 here, which applies to both Luma and Chroma blocks, is not the
-		// Chroma-only bias handled by biasUp and biasDown.
-		ex := int((src[bitOffset>>3]>>(bitOffset&4))&15) - 8
-		bitOffset += 4
-		ey := int((src[bitOffset>>3]>>(bitOffset&4))&15) - 8
-		bitOffset += 4
-
-		x := 2 * (i & 3)
-		y := 2 * (i >> 2)
-		j0 := ((y + 0) * stride) + x
-		j1 := ((y + 1) * stride) + x
-
-		dst[j0+0] = uint8(max(0x00, min(0xFF, (ew*0x11)+((-ey-ex)*8))))
-		dst[j0+1] = uint8(max(0x00, min(0xFF, (ew*0x11)+((-ey+ex)*8))))
-		dst[j1+0] = uint8(max(0x00, min(0xFF, (ew*0x11)+((+ey-ex)*8))))
-		dst[j1+1] = uint8(max(0x00, min(0xFF, (ew*0x11)+((+ey+ex)*8))))
-	}
-	return bitOffset
+var decodeBlockFuncs = [4]decodeBlockFunc{
+	decodeBlockQ0,
+	decodeBlockQ1,
+	decodeBlockQ1,
+	decodeBlockQ3,
 }
 
-func decodeXBlock(dst []byte, stride int, src *[fileSizeMax]byte, bitOffset int) int {
+func decodeBlockQ0(dst []byte, stride int, buf *[fileSizeMax]byte, bitOffset int, nCoeffs int) int {
 	a := lowleveljpeg.BlockI16{}
 
-	{
-		nibble := (src[bitOffset>>3] >> (bitOffset & 4)) & 15
-		a[0] = (int16(nibble) - 8) * dcBucketWidth
-		bitOffset += 4
-	}
-
-	for i := 1; i < nCoeffs; i++ {
-		nibble := (src[bitOffset>>3] >> (bitOffset & 4)) & 15
-		a[zigzag[i]] = (int16(nibble) - 8) * acBucketWidth
+	for _, z := range zigzag8 {
+		nibble := (buf[bitOffset>>3] >> (bitOffset & 4)) & 15
+		if z == 0 {
+			a[z] = int16((int32(nibble) * 0x88) - 1024)
+		} else {
+			a[z] = int16((int32(nibble) * 0x40) - 512)
+		}
 		bitOffset += 4
 	}
 
@@ -480,32 +505,129 @@ func decodeXBlock(dst []byte, stride int, src *[fileSizeMax]byte, bitOffset int)
 	return bitOffset
 }
 
-const nCoeffs = 15
+func decodeBlockQ1(dst []byte, stride int, buf *[fileSizeMax]byte, bitOffset int, nCoeffs int) int {
+	tmp := lowleveljpeg.BlockU8{}
 
-// zigzag represents JPEG's zig-zag order for visiting DCT coefficients. X
-// (Extremely Potato) only uses the first (1 + 2 + 3 + 4 + 5) = 15 of JPEG's 64
-// DCT coefficients.
+	for i := range 4 {
+		a := lowleveldct4x4.BlockI16{}
+
+		for _, z := range zigzag4[:nCoeffs] {
+			nibble := (buf[bitOffset>>3] >> (bitOffset & 4)) & 15
+			if z == 0 {
+				a[z] = int16((int32(nibble) * 0x44) - 512)
+			} else {
+				a[z] = int16((int32(nibble) * 0x20) - 256)
+			}
+			bitOffset += 4
+		}
+
+		b := lowleveldct4x4.BlockU8{}
+		b.InverseDCTFrom(&a)
+
+		x4 := (i & 1) << 2 // The sequence 0, 4, 0, 4.
+		y4 := (i & 2) << 1 // The sequence 0, 0, 4, 4.
+
+		for i := range 4 {
+			ti := ((i + y4) * 8) + x4
+			bi := i * 4
+			copy(tmp[ti:ti+4], b[bi:bi+4])
+		}
+	}
+
+	smoothBlockSeams8x8Q1(&tmp)
+
+	for i := range 8 {
+		di := i * stride
+		ti := i * 8
+		copy(dst[di:di+8], tmp[ti:ti+8])
+	}
+
+	return bitOffset
+}
+
+func decodeBlockQ3(dst []byte, stride int, buf *[fileSizeMax]byte, bitOffset int, nCoeffs int) int {
+	tmp := lowleveljpeg.BlockU8{}
+
+	for i := range 16 {
+		nibble0 := (buf[bitOffset>>3] >> (bitOffset & 4)) & 15
+		dct0 := (int32(nibble0) * 0x22) - 256
+		bitOffset += 4
+
+		nibble1 := (buf[bitOffset>>3] >> (bitOffset & 4)) & 15
+		dct1 := (int32(nibble1) * 0x10) - 128
+		bitOffset += 4
+
+		nibble2 := (buf[bitOffset>>3] >> (bitOffset & 4)) & 15
+		dct2 := (int32(nibble2) * 0x10) - 128
+		bitOffset += 4
+
+		x2 := 2 * (i & 3)   // The sequence 0, 2, 4, 6,  0,  2,  4, ...,  6.
+		y2 := 2 * (i >> 2)  // The sequence 0, 0, 0, 0,  2,  2,  2, ...,  6.
+		o2 := (y2 * 8) + x2 // The sequence 0, 2, 4, 6, 16, 18, 20, ..., 54.
+
+		tmp[o2+0] = biasAndClamp[((+dct0+dct1+dct2+1)>>1)&1023]
+		tmp[o2+1] = biasAndClamp[((+dct0-dct1+dct2+1)>>1)&1023]
+		tmp[o2+8] = biasAndClamp[((+dct0+dct1-dct2+1)>>1)&1023]
+		tmp[o2+9] = biasAndClamp[((+dct0-dct1-dct2+1)>>1)&1023]
+	}
+
+	smoothBlockSeams8x8Q3(&tmp)
+
+	for i := range 8 {
+		di := i * stride
+		ti := i * 8
+		copy(dst[di:di+8], tmp[ti:ti+8])
+	}
+
+	return bitOffset
+}
+
+// zigzag8 represents JPEG's zig-zag order for visiting DCT coefficients.
+// QualityWorst only uses the first (1 + 2 + 3 + 4 + 5) = 15 of JPEG's 64 DCT
+// coefficients.
 //
 // https://en.wikipedia.org/wiki/File:JPEG_ZigZag.svg
-var zigzag = [nCoeffs]uint8{
+var zigzag8 = [15]uint8{
 	0o00, 0o01, 0o10, 0o20, 0o11, 0o02, 0o03, 0o12, //  0,  1,  8, 16,  9,  2,  3, 10,
 	0o21, 0o30, 0o40, 0o31, 0o22, 0o13, 0o04, //       17, 24, 32, 25, 18, 11,  4,
 }
 
-func biasUp(b *lowleveljpeg.BlockU8) {
-	for i, v := range b {
-		b[i] = uint8(min(0xFF, int(v)+8))
+// zigzag4 is like zigzag8 but using the first (1 + 2 + 3) = 6 or (1 + 2 + 3 +
+// 4) = 10 (instead of 15) DCT coefficients of a 4×4 (instead of 8×8) block.
+var zigzag4 = [10]uint8{
+	0o00, 0o01, 0o04, 0o10, 0o05, 0o02, 0o03, 0o06, //  0,  1,  4,  8,  5,  2,  3,  6,
+	0o11, 0o14, //                                      9, 12,
+}
+
+// nibblify clamps v to the range [0x0, 0xF].
+func nibblify(v int32) uint8 {
+	return uint8(max(0x0, min(0xF, v)))
+}
+
+// extract4x4Tile extracts a 4×4 tile out of an 8×8 block.
+func extract4x4Tile(b8 *lowleveljpeg.BlockU8, offset int) lowleveldct4x4.BlockU8 {
+	return lowleveldct4x4.BlockU8{
+		b8[offset+0x00],
+		b8[offset+0x01],
+		b8[offset+0x02],
+		b8[offset+0x03],
+		b8[offset+0x08],
+		b8[offset+0x09],
+		b8[offset+0x0A],
+		b8[offset+0x0B],
+		b8[offset+0x10],
+		b8[offset+0x11],
+		b8[offset+0x12],
+		b8[offset+0x13],
+		b8[offset+0x18],
+		b8[offset+0x19],
+		b8[offset+0x1A],
+		b8[offset+0x1B],
 	}
 }
 
-func biasDown(b *lowleveljpeg.BlockU8) {
-	for i, v := range b {
-		b[i] = uint8(max(0x00, int(v)-8))
-	}
-}
-
-func smoothLumaBlockSeams(b *lowleveljpeg.QuadBlockU8) {
-	for _, pair := range smoothingPairs {
+func smoothBlockSeams16x16(b *lowleveljpeg.QuadBlockU8) {
+	for _, pair := range smoothingPairs16x16 {
 		v0 := uint32(b[pair[0]])
 		v1 := uint32(b[pair[1]])
 		b[pair[0]] = uint8(((3 * v0) + v1 + 2) / 4)
@@ -523,9 +645,76 @@ func smoothLumaBlockSeams(b *lowleveljpeg.QuadBlockU8) {
 	b[0x87] = uint8(((9 * v87) + (3 * v77) + v78 + (3 * v88) + 8) / 16)
 }
 
-// smoothingPairs are the seams of the four 8×8 Luma blocks in a 16×16 MCU. The
-// central 4 pixels are handled separately.
-var smoothingPairs = [28][2]uint8{
+func smoothBlockSeams8x8Q1(b *lowleveljpeg.BlockU8) {
+	for _, pair := range smoothingPairs8x8 {
+		v0 := uint32(b[pair[0]])
+		v1 := uint32(b[pair[1]])
+		b[pair[0]] = uint8(((3 * v0) + v1 + 2) / 4)
+		b[pair[1]] = uint8(((3 * v1) + v0 + 2) / 4)
+	}
+
+	v33 := uint32(b[0o33])
+	v34 := uint32(b[0o34])
+	v44 := uint32(b[0o44])
+	v43 := uint32(b[0o43])
+
+	b[0o33] = uint8(((9 * v33) + (3 * v34) + v44 + (3 * v43) + 8) / 16)
+	b[0o34] = uint8(((9 * v34) + (3 * v44) + v43 + (3 * v33) + 8) / 16)
+	b[0o44] = uint8(((9 * v44) + (3 * v43) + v33 + (3 * v34) + 8) / 16)
+	b[0o43] = uint8(((9 * v43) + (3 * v33) + v34 + (3 * v44) + 8) / 16)
+}
+
+func smoothBlockSeams8x8Q3(b *lowleveljpeg.BlockU8) {
+	for y := 1; y < 7; y += 2 {
+		for x := 1; x < 7; x += 2 {
+			o := (y * 8) + x
+
+			v0 := uint32(b[o+0])
+			v1 := uint32(b[o+1])
+			v9 := uint32(b[o+9])
+			v8 := uint32(b[o+8])
+
+			b[o+0] = uint8(((9 * v0) + (3 * v1) + v9 + (3 * v8) + 8) / 16)
+			b[o+1] = uint8(((9 * v1) + (3 * v9) + v8 + (3 * v0) + 8) / 16)
+			b[o+9] = uint8(((9 * v9) + (3 * v8) + v0 + (3 * v1) + 8) / 16)
+			b[o+8] = uint8(((9 * v8) + (3 * v0) + v1 + (3 * v9) + 8) / 16)
+		}
+
+		{
+			v0 := uint32(b[0o00+y])
+			v1 := uint32(b[0o01+y])
+			b[0o00+y] = uint8(((3 * v0) + v1 + 2) / 4)
+			b[0o01+y] = uint8(((3 * v1) + v0 + 2) / 4)
+		}
+
+		{
+			v0 := uint32(b[0o70+y])
+			v1 := uint32(b[0o71+y])
+			b[0o70+y] = uint8(((3 * v0) + v1 + 2) / 4)
+			b[0o71+y] = uint8(((3 * v1) + v0 + 2) / 4)
+		}
+
+		y8 := y * 8
+
+		{
+			v0 := uint32(b[0o00+y8])
+			v1 := uint32(b[0o10+y8])
+			b[0o00+y8] = uint8(((3 * v0) + v1 + 2) / 4)
+			b[0o10+y8] = uint8(((3 * v1) + v0 + 2) / 4)
+		}
+
+		{
+			v0 := uint32(b[0o07+y8])
+			v1 := uint32(b[0o17+y8])
+			b[0o07+y8] = uint8(((3 * v0) + v1 + 2) / 4)
+			b[0o17+y8] = uint8(((3 * v1) + v0 + 2) / 4)
+		}
+	}
+}
+
+// smoothingPairs16x16 are the seams of the four 8×8 Luma blocks in a 16×16
+// MCU. The central 4 pixels are handled separately.
+var smoothingPairs16x16 = [28][2]uint8{
 	{0x07, 0x08},
 	{0x17, 0x18},
 	{0x27, 0x28},
@@ -557,4 +746,152 @@ var smoothingPairs = [28][2]uint8{
 	{0xD7, 0xD8},
 	{0xE7, 0xE8},
 	{0xF7, 0xF8},
+}
+
+// smoothingPairs8x8 is like smoothingPairs16x16 but for the seams of the four
+// 4×4 quadrants of an 8×8.
+var smoothingPairs8x8 = [12][2]uint8{
+	{0o03, 0o04},
+	{0o13, 0o14},
+	{0o23, 0o24},
+
+	{0o30, 0o40},
+	{0o31, 0o41},
+	{0o32, 0o42},
+
+	{0o35, 0o45},
+	{0o36, 0o46},
+	{0o37, 0o47},
+
+	{0o53, 0o54},
+	{0o63, 0o64},
+	{0o73, 0o74},
+}
+
+func scaleAndBiasChromaUp(b *lowleveljpeg.BlockU8) {
+	for i, v := range b {
+		b[i] = scaleAndBiasChromaUpLUT[v]
+	}
+}
+
+func scaleAndBiasChromaDown(b *lowleveljpeg.BlockU8) {
+	for i, v := range b {
+		b[i] = scaleAndBiasChromaDownLUT[v]
+	}
+}
+
+var scaleAndBiasChromaUpLUT = [256]uint8{
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x04, 0x06,
+	0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E, 0x20, 0x22, 0x24, 0x26,
+	0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C, 0x3E, 0x40, 0x42, 0x44, 0x46,
+	0x48, 0x4A, 0x4C, 0x4E, 0x50, 0x52, 0x54, 0x56, 0x58, 0x5A, 0x5C, 0x5E, 0x60, 0x62, 0x64, 0x66,
+	0x68, 0x6A, 0x6C, 0x6E, 0x70, 0x72, 0x74, 0x76, 0x78, 0x7A, 0x7C, 0x7E, 0x80, 0x82, 0x84, 0x86,
+
+	0x88, 0x8A, 0x8C, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x9A, 0x9C, 0x9E, 0xA0, 0xA2, 0xA4, 0xA6,
+	0xA8, 0xAA, 0xAC, 0xAE, 0xB0, 0xB2, 0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0, 0xC2, 0xC4, 0xC6,
+	0xC8, 0xCA, 0xCC, 0xCE, 0xD0, 0xD2, 0xD4, 0xD6, 0xD8, 0xDA, 0xDC, 0xDE, 0xE0, 0xE2, 0xE4, 0xE6,
+	0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6, 0xF8, 0xFA, 0xFC, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+}
+
+var scaleAndBiasChromaDownLUT = [256]uint8{
+	0x3C, 0x3C, 0x3D, 0x3D, 0x3E, 0x3E, 0x3F, 0x3F, 0x40, 0x40, 0x41, 0x41, 0x42, 0x42, 0x43, 0x43,
+	0x44, 0x44, 0x45, 0x45, 0x46, 0x46, 0x47, 0x47, 0x48, 0x48, 0x49, 0x49, 0x4A, 0x4A, 0x4B, 0x4B,
+	0x4C, 0x4C, 0x4D, 0x4D, 0x4E, 0x4E, 0x4F, 0x4F, 0x50, 0x50, 0x51, 0x51, 0x52, 0x52, 0x53, 0x53,
+	0x54, 0x54, 0x55, 0x55, 0x56, 0x56, 0x57, 0x57, 0x58, 0x58, 0x59, 0x59, 0x5A, 0x5A, 0x5B, 0x5B,
+	0x5C, 0x5C, 0x5D, 0x5D, 0x5E, 0x5E, 0x5F, 0x5F, 0x60, 0x60, 0x61, 0x61, 0x62, 0x62, 0x63, 0x63,
+	0x64, 0x64, 0x65, 0x65, 0x66, 0x66, 0x67, 0x67, 0x68, 0x68, 0x69, 0x69, 0x6A, 0x6A, 0x6B, 0x6B,
+	0x6C, 0x6C, 0x6D, 0x6D, 0x6E, 0x6E, 0x6F, 0x6F, 0x70, 0x70, 0x71, 0x71, 0x72, 0x72, 0x73, 0x73,
+	0x74, 0x74, 0x75, 0x75, 0x76, 0x76, 0x77, 0x77, 0x78, 0x78, 0x79, 0x79, 0x7A, 0x7A, 0x7B, 0x7B,
+
+	0x7C, 0x7C, 0x7D, 0x7D, 0x7E, 0x7E, 0x7F, 0x7F, 0x80, 0x80, 0x81, 0x81, 0x82, 0x82, 0x83, 0x83,
+	0x84, 0x84, 0x85, 0x85, 0x86, 0x86, 0x87, 0x87, 0x88, 0x88, 0x89, 0x89, 0x8A, 0x8A, 0x8B, 0x8B,
+	0x8C, 0x8C, 0x8D, 0x8D, 0x8E, 0x8E, 0x8F, 0x8F, 0x90, 0x90, 0x91, 0x91, 0x92, 0x92, 0x93, 0x93,
+	0x94, 0x94, 0x95, 0x95, 0x96, 0x96, 0x97, 0x97, 0x98, 0x98, 0x99, 0x99, 0x9A, 0x9A, 0x9B, 0x9B,
+	0x9C, 0x9C, 0x9D, 0x9D, 0x9E, 0x9E, 0x9F, 0x9F, 0xA0, 0xA0, 0xA1, 0xA1, 0xA2, 0xA2, 0xA3, 0xA3,
+	0xA4, 0xA4, 0xA5, 0xA5, 0xA6, 0xA6, 0xA7, 0xA7, 0xA8, 0xA8, 0xA9, 0xA9, 0xAA, 0xAA, 0xAB, 0xAB,
+	0xAC, 0xAC, 0xAD, 0xAD, 0xAE, 0xAE, 0xAF, 0xAF, 0xB0, 0xB0, 0xB1, 0xB1, 0xB2, 0xB2, 0xB3, 0xB3,
+	0xB4, 0xB4, 0xB5, 0xB5, 0xB6, 0xB6, 0xB7, 0xB7, 0xB8, 0xB8, 0xB9, 0xB9, 0xBA, 0xBA, 0xBB, 0xBB,
+}
+
+// biasAndClamp[x & 1023] is (x + 0x80), clamped to the range [0x00, 0xFF], for
+// a signed integer x in the range [-512, +511].
+var biasAndClamp = [1024]uint8{
+	0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+	0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F,
+	0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+	0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+	0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
+	0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,
+	0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF,
+	0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
+
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+	0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+	0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+	0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F,
 }

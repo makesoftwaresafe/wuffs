@@ -66,7 +66,7 @@ the first "./a.out" with "./a.out -bench". Combine these changes with the
 // ---------------- Handsum Tests
 
 const char*  //
-test_wuffs_handsum_decode_interface_hvpc() {
+test_wuffs_handsum_decode_interface_g0() {
   CHECK_FOCUS(__func__);
   wuffs_handsum__decoder dec;
   CHECK_STATUS("initialize",
@@ -75,11 +75,11 @@ test_wuffs_handsum_decode_interface_hvpc() {
                    WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
   return do_test__wuffs_base__image_decoder(
       wuffs_handsum__decoder__upcast_as__wuffs_base__image_decoder(&dec),
-      "test/data/bricks-color.hvpc.handsum", 0, SIZE_MAX, 32, 24, 0xFF052A90);
+      "test/data/bricks-gray.g0.handsum", 0, SIZE_MAX, 16, 12, 0xFF040404);
 }
 
 const char*  //
-test_wuffs_handsum_decode_interface_hvpg() {
+test_wuffs_handsum_decode_interface_r1() {
   CHECK_FOCUS(__func__);
   wuffs_handsum__decoder dec;
   CHECK_STATUS("initialize",
@@ -88,11 +88,11 @@ test_wuffs_handsum_decode_interface_hvpg() {
                    WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
   return do_test__wuffs_base__image_decoder(
       wuffs_handsum__decoder__upcast_as__wuffs_base__image_decoder(&dec),
-      "test/data/bricks-gray.hvpg.handsum", 0, SIZE_MAX, 32, 24, 0xFF010101);
+      "test/data/bricks-color.r1.handsum", 0, SIZE_MAX, 16, 12, 0xFF313D58);
 }
 
 const char*  //
-test_wuffs_handsum_decode_interface_hvxc() {
+test_wuffs_handsum_decode_interface_g2() {
   CHECK_FOCUS(__func__);
   wuffs_handsum__decoder dec;
   CHECK_STATUS("initialize",
@@ -101,11 +101,11 @@ test_wuffs_handsum_decode_interface_hvxc() {
                    WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
   return do_test__wuffs_base__image_decoder(
       wuffs_handsum__decoder__upcast_as__wuffs_base__image_decoder(&dec),
-      "test/data/bricks-color.hvxc.handsum", 0, SIZE_MAX, 32, 24, 0xFF571218);
+      "test/data/bricks-gray.g2.handsum", 0, SIZE_MAX, 16, 12, 0xFF101010);
 }
 
 const char*  //
-test_wuffs_handsum_decode_interface_hvxg() {
+test_wuffs_handsum_decode_interface_r3() {
   CHECK_FOCUS(__func__);
   wuffs_handsum__decoder dec;
   CHECK_STATUS("initialize",
@@ -114,7 +114,7 @@ test_wuffs_handsum_decode_interface_hvxg() {
                    WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
   return do_test__wuffs_base__image_decoder(
       wuffs_handsum__decoder__upcast_as__wuffs_base__image_decoder(&dec),
-      "test/data/bricks-gray.hvxg.handsum", 0, SIZE_MAX, 32, 24, 0xFF0D0D0D);
+      "test/data/bricks-color.r3.handsum", 0, SIZE_MAX, 16, 12, 0xFF0B337D);
 }
 
 const char*  //
@@ -158,13 +158,13 @@ test_wuffs_handsum_decode_frame_config() {
   wuffs_base__io_buffer src = ((wuffs_base__io_buffer){
       .data = g_src_slice_u8,
   });
-  CHECK_STRING(read_file(&src, "test/data/mona-lisa.21x32.hvxc.handsum"));
+  CHECK_STRING(read_file(&src, "test/data/mona-lisa.21x32.r3.handsum"));
 
   CHECK_STATUS("decode_frame_config #0",
                wuffs_handsum__decoder__decode_frame_config(&dec, &fc, &src));
 
   uint32_t have = wuffs_base__frame_config__width(&fc);
-  uint32_t want = 21;
+  uint32_t want = 11;
   if (have != want) {
     RETURN_FAIL("width: have %u, want %u", have, want);
   }
@@ -203,10 +203,10 @@ test_wuffs_handsum_decode_frame_config() {
 proc g_tests[] = {
 
     test_wuffs_handsum_decode_frame_config,
-    test_wuffs_handsum_decode_interface_hvpc,
-    test_wuffs_handsum_decode_interface_hvpg,
-    test_wuffs_handsum_decode_interface_hvxc,
-    test_wuffs_handsum_decode_interface_hvxg,
+    test_wuffs_handsum_decode_interface_g0,
+    test_wuffs_handsum_decode_interface_r1,
+    test_wuffs_handsum_decode_interface_g2,
+    test_wuffs_handsum_decode_interface_r3,
     test_wuffs_handsum_decode_truncated_input,
 
 #ifdef WUFFS_MIMIC

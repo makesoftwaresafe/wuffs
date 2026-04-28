@@ -17,11 +17,9 @@ import (
 	"bytes"
 	"errors"
 	"flag"
-	"fmt"
 	"image"
 	"image/png"
 	"os"
-	"strings"
 
 	"github.com/google/wuffs/lib/handsum"
 
@@ -37,7 +35,9 @@ var (
 	decodeFlag    = flag.Bool("decode", false, "whether to decode the input")
 	encodeFlag    = flag.Bool("encode", false, "whether to encode the input")
 	roundtripFlag = flag.Bool("roundtrip", false, "whether to encode-and-decode the input")
-	variantFlag   = flag.String("variant", "hvpc", "which variant to encode to: hvpc, hvpg, hvxc, hvxg")
+
+	cFlag = flag.String("c", "rgb", "encoding color: gray or rgb [default]")
+	qFlag = flag.Int("q", 3, "encoding quality: 0, 1, 2 or 3 [default]")
 )
 
 const usageStr = `handsum decodes and encodes the Handsum lossy image file format.
@@ -56,14 +56,10 @@ Decode inputs Handsum and outputs PNG.
 Encode inputs BMP, GIF, JPEG, PNG, TIFF or WEBP and outputs Handsum.
 Roundtrip is equivalent to encode (to an ephemeral file) and then decode.
 
-For encode or roundtrip, you can also choose a quality and color variant
+For encode or roundtrip, the default color and quality is -c=rgb -q=3 (best
+quality; 147 bytes per file) but you can choose a lower setting. For example:
 
-    -variant=hvpc to use Handsum Variant Potato Color (the default)
-    -variant=hvpg to use Handsum Variant Potato Gray
-    -variant=hvxc to use Handsum Variant ExtremelyPotato Color
-    -variant=hvxg to use Handsum Variant ExtremelyPotato Gray
-
-For example: handsum -encode -variant=hvpg foo.png > foo.hvpg.handsum
+handsum -encode -c=gray -q=2 foo.png > foo.handsum
 `
 
 func main() {
@@ -77,19 +73,12 @@ func main1() error {
 	flag.Usage = func() { os.Stderr.WriteString(usageStr) }
 	flag.Parse()
 
-	variant := handsum.Variant(0)
-	switch strings.ToLower(*variantFlag) {
-	case "hvpc":
-		variant = handsum.VariantPotatoColor
-	case "hvpg":
-		variant = handsum.VariantPotatoGray
-	case "hvxc":
-		variant = handsum.VariantExtremelyPotatoColor
-	case "hvxg":
-		variant = handsum.VariantExtremelyPotatoGray
-	default:
-		return fmt.Errorf("bad -variant flag value %q", *variantFlag)
+	color := handsum.ColorRGB
+	switch *cFlag {
+	case "0", "GRAY", "Gray", "gray":
+		color = handsum.ColorGray
 	}
+	quality := handsum.Quality(max(0, min(3, *qFlag)))
 
 	inFile := os.Stdin
 	switch flag.NArg() {
@@ -110,10 +99,10 @@ func main1() error {
 		return decode(inFile)
 	}
 	if !*decodeFlag && *encodeFlag && !*roundtripFlag {
-		return encode(inFile, variant)
+		return encode(inFile, color, quality)
 	}
 	if !*decodeFlag && !*encodeFlag && *roundtripFlag {
-		return roundtrip(inFile, variant)
+		return roundtrip(inFile, color, quality)
 	}
 	return errors.New("must specify exactly one of -decode, -encode, -roundtrip or -help")
 }
@@ -126,21 +115,27 @@ func decode(inFile *os.File) error {
 	return png.Encode(os.Stdout, src)
 }
 
-func encode(inFile *os.File, variant handsum.Variant) error {
+func encode(inFile *os.File, color handsum.Color, quality handsum.Quality) error {
 	src, _, err := image.Decode(inFile)
 	if err != nil {
 		return err
 	}
-	return handsum.Encode(os.Stdout, src, &handsum.EncodeOptions{Variant: variant})
+	return handsum.Encode(os.Stdout, src, &handsum.EncodeOptions{
+		Color:   handsum.MakeOptionColor(color),
+		Quality: handsum.MakeOptionQuality(quality),
+	})
 }
 
-func roundtrip(inFile *os.File, variant handsum.Variant) error {
+func roundtrip(inFile *os.File, color handsum.Color, quality handsum.Quality) error {
 	src, _, err := image.Decode(inFile)
 	if err != nil {
 		return err
 	}
 	buf := &bytes.Buffer{}
-	err = handsum.Encode(buf, src, &handsum.EncodeOptions{Variant: variant})
+	err = handsum.Encode(buf, src, &handsum.EncodeOptions{
+		Color:   handsum.MakeOptionColor(color),
+		Quality: handsum.MakeOptionQuality(quality),
+	})
 	if err != nil {
 		return err
 	}
