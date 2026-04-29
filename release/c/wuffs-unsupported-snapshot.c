@@ -10679,7 +10679,7 @@ struct wuffs_handsum__decoder__struct {
     uint32_t f_quality;
     uint8_t f_call_sequence;
     uint16_t f_bit_offset;
-    uint16_t f_coeffs[40];
+    uint16_t f_coeffs[25];
     wuffs_base__pixel_swizzler f_swizzler;
 
     uint32_t p_decode_image_config;
@@ -50344,8 +50344,8 @@ WUFFS_HANDSUM__CLAMP_7[32] WUFFS_BASE__POTENTIALLY_UNUSED = {
 static const uint8_t
 WUFFS_HANDSUM__ZIGZAG[2][15] WUFFS_BASE__POTENTIALLY_UNUSED = {
   {
-    0u, 1u, 8u, 16u, 9u, 2u, 3u, 10u,
-    17u, 24u, 32u, 25u, 18u, 11u, 4u,
+    0u, 1u, 5u, 10u, 6u, 2u, 3u, 7u,
+    11u, 15u, 20u, 16u, 12u, 8u, 4u,
   }, {
     0u, 1u, 4u, 8u, 5u, 2u, 3u, 6u,
     9u, 12u, 0u, 0u, 0u, 0u, 0u,
@@ -51472,7 +51472,7 @@ wuffs_handsum__decoder__decode_block_q0(
           v_alphas_16 = wuffs_base__utility__sign_extend_rshift_u64(((uint64_t)(((uint64_t)(v_half_alpha_v_16 * v_half_alpha_u_16)) + 32768u)), 16u);
           v_c_32 = ((uint64_t)(wuffs_base__utility__sign_extend_convert_u32_u64(WUFFS_HANDSUM__COSINES[((((2u * v_x) + 1u) * v_u) & 31u)]) * wuffs_base__utility__sign_extend_convert_u32_u64(WUFFS_HANDSUM__COSINES[((((2u * v_y) + 1u) * v_v) & 31u)])));
           v_c_16 = wuffs_base__utility__sign_extend_rshift_u64(((uint64_t)(v_c_32 + 32768u)), 16u);
-          v_alphas_sum_32 += ((uint64_t)(((uint64_t)(v_alphas_16 * v_c_16)) * wuffs_base__utility__sign_extend_convert_u16_u64(self->private_impl.f_coeffs[((8u * v_v) + v_u)])));
+          v_alphas_sum_32 += ((uint64_t)(((uint64_t)(v_alphas_16 * v_c_16)) * wuffs_base__utility__sign_extend_convert_u16_u64(self->private_impl.f_coeffs[((5u * v_v) + v_u)])));
           v_u += 1u;
         }
         v_v += 1u;

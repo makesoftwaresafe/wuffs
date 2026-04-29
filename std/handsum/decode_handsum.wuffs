@@ -31,7 +31,7 @@ pub struct decoder? implements base.image_decoder(
 
         bit_offset : base.u16,
 
-        coeffs : array[40] base.u16,
+        coeffs : array[25] base.u16,
 
         swizzler : base.pixel_swizzler,
         util     : base.utility,
@@ -370,7 +370,7 @@ pri func decoder.decode_block_q0!(which: base.u32[..= 1], y_offset: base.u32[..=
 
                     alphas_sum_32 ~mod+= (alphas_16 ~mod* c_16) ~mod*
                             this.util.sign_extend_convert_u16_u64(
-                            a: this.coeffs[(8 * v) + u])
+                            a: this.coeffs[(5 * v) + u])
 
                     u += 1
                 }
@@ -1104,8 +1104,8 @@ pri const CLAMP_7 : roarray[32] base.u8[..= 7] = [
 // For commentary on these constants below, see the lib/handsum and
 // lib/lowleveljpeg Go packages.
 
-pri const ZIGZAG : roarray[2] roarray[15] base.u8[..= 39] = [[
-        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4,
+pri const ZIGZAG : roarray[2] roarray[15] base.u8[..= 24] = [[
+        0, 1, 5, 10, 6, 2, 3, 7, 11, 15, 20, 16, 12, 8, 4,
 ],[
         0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 0, 0, 0, 0, 0,
 ]]
