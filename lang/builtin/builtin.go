@@ -115,6 +115,11 @@ var Consts = [...]struct {
 
 	// ----
 
+	{t.IDU8, "0", "PIXEL_BLEND__SRC"},
+	{t.IDU8, "1", "PIXEL_BLEND__SRC_OVER"},
+
+	// ----
+
 	{t.IDU32, "0x02000008", "PIXEL_FORMAT__A"},
 
 	{t.IDU32, "0x20000008", "PIXEL_FORMAT__Y"},
@@ -408,6 +413,7 @@ var funcsOther = [...]string{
 	"utility.i64_divide(a: u64, b: u64[1 ..=]) u64",
 	"utility.make_bitvec256(e00: u64, e01: u64, e02: u64, e03: u64) bitvec256",
 	"utility.make_optional_u63(has_value: bool, value: u64[..= 0x7FFF_FFFF_FFFF_FFFF]) optional_u63",
+	"utility.make_pixel_blend(repr: u8) pixel_blend",
 	"utility.make_pixel_format(repr: u32) pixel_format",
 	"utility.make_range_ii_u32(min_incl: u32, max_incl: u32) range_ii_u32",
 	"utility.make_range_ie_u32(min_incl: u32, max_excl: u32) range_ie_u32",

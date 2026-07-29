@@ -8,10 +8,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-pri func decoder.decode_macroblocks!(dst: ptr base.pixel_buffer, workbuf: slice base.u8) base.status {
-    var mby    : base.u32
-    var mbx    : base.u32
-    var status : base.status
+pri func decoder.decode_macroblocks!(workbuf: slice base.u8) base.status {
+    var mby : base.u32
+    var mbx : base.u32
 
     mbx = 0
     while mbx < this.mbw {
@@ -55,7 +54,7 @@ pri func decoder.decode_macroblocks!(dst: ptr base.pixel_buffer, workbuf: slice 
         mby += 1
     }
 
-    // Filter the final row, already in args.workbuf, and swizzle to args.dst.
+    // Filter the final row, already in args.workbuf.
     if this.mbh > 0 {
         if this.filt_level <= 0 {
             // No-op.
@@ -65,10 +64,6 @@ pri func decoder.decode_macroblocks!(dst: ptr base.pixel_buffer, workbuf: slice 
             this.filter_normal!(workbuf: args.workbuf, mby: this.mbh - 1)
         }
 
-        status = this.swizzle!(dst: args.dst, workbuf: args.workbuf)
-        if not status.is_ok() {
-            return status
-        }
     }
 
     return ok

@@ -18,6 +18,11 @@ pri const QUIRKS_BASE : base.u32 = 0x6D7B_F800
 
 // --------
 
+// When this quirk is enabled, the workbuf starts with (width × height) alpha
+// samples, decoded out-of-band (from the VP8 decoder's perspective, they are
+// typically decoded in-band from the surrounding WebP decoder's perspective).
+pub const QUIRK_HAS_ALPHA_SIDE_CHANNEL : base.u32 = 0x6D7B_F800 | 0x00
+
 // Gives the image width and height out-of-band, in the u64 quirk value. The
 // low 32 bits are the width and the high 32 bits are the height. Both
 // dimensions should range within 0x0001 ..= 0x3FFF.
@@ -35,4 +40,4 @@ pri const QUIRKS_BASE : base.u32 = 0x6D7B_F800
 //
 // This quirk mechanism lets the outer webp decoder tell the inner vp8 decoder
 // those dimensions, after parsing the VP8X chunk but before ALPH or VP8.
-pub const QUIRK_WIDTH_AND_HEIGHT : base.u32 = 0x6D7B_F800 | 0x00
+pub const QUIRK_WIDTH_AND_HEIGHT : base.u32 = 0x6D7B_F800 | 0x01

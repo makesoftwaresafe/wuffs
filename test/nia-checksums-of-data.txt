@@ -134,7 +134,7 @@ OK. 56cf6ae1 test/data/hippopotamus.lossy.webp
 OK. 2535637e test/data/hippopotamus.masked-with-muybridge.etc2.bgra-binary.pkm
 OK. 720180ee test/data/hippopotamus.masked-with-muybridge.etc2.bgra-nonpremul.pkm
 OK. d3bbed27 test/data/hippopotamus.masked-with-muybridge.gif
-OK. c41410be test/data/hippopotamus.masked-with-muybridge.lossy.webp
+OK. 1d8cd8b2 test/data/hippopotamus.masked-with-muybridge.lossy.webp
 OK. 7e6acf01 test/data/hippopotamus.masked-with-muybridge.png
 OK. dcbb225a test/data/hippopotamus.nie
 OK. 57d9a4dd test/data/hippopotamus.pgm

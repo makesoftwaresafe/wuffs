@@ -44,7 +44,7 @@ OK. b3389858 test/3pdata/blinksuite/color-checker-srgb-color-profile.png
 OK. 10721531 test/3pdata/blinksuite/count-down-color-test.gif
 OK. 1abc4dc6 test/3pdata/blinksuite/count-down-color-test.png
 BAD d663b0e6 test/3pdata/blinksuite/count-down-color-test.webp
-OK. 83ea9bce test/3pdata/blinksuite/crbug.364830.webp
+OK. 18fbe8ca test/3pdata/blinksuite/crbug.364830.webp
 OK. 24ab1efd test/3pdata/blinksuite/crbug779261.gif
 OK. ae034abe test/3pdata/blinksuite/crbug807324.png
 OK. 4f50fdb0 test/3pdata/blinksuite/crbug827754.png
@@ -180,9 +180,9 @@ OK. 1b1f5f96 test/3pdata/blinksuite/stripes-large.png
 OK. 6b85cdb9 test/3pdata/blinksuite/stripes-small.png
 OK. 16c2c0fe test/3pdata/blinksuite/test-load.jpg
 OK. 6fbda804 test/3pdata/blinksuite/test.webp
-OK. b7690880 test/3pdata/blinksuite/test2.webp
+OK. eb16e76c test/3pdata/blinksuite/test2.webp
 OK. 19d3a207 test/3pdata/blinksuite/test3.webp
-OK. 17bda738 test/3pdata/blinksuite/truncated.webp
+OK. 22cc757c test/3pdata/blinksuite/truncated.webp
 BAD 1dfa35c6 test/3pdata/blinksuite/truncated2.webp
 BAD b16eb1a2 test/3pdata/blinksuite/webp-animated-icc-xmp.webp
 BAD 45030792 test/3pdata/blinksuite/webp-animated-large.webp
@@ -196,7 +196,7 @@ BAD ae7f1fcf test/3pdata/blinksuite/webp-animated.webp
 OK. eb191e45 test/3pdata/blinksuite/webp-color-no-profile-lossy.webp
 OK. 60116c2c test/3pdata/blinksuite/webp-color-profile-crash.webp
 BAD f234aa8a test/3pdata/blinksuite/webp-color-profile-lossless.webp
-OK. b861d3c2 test/3pdata/blinksuite/webp-color-profile-lossy-alpha.webp
+OK. db8c197f test/3pdata/blinksuite/webp-color-profile-lossy-alpha.webp
 OK. 684e3635 test/3pdata/blinksuite/webp-color-profile-lossy.webp
 BAD ed67a9a5 test/3pdata/blinksuite/wrong-block-length.gif
 OK. 577c5c4c test/3pdata/blinksuite/ycbcr-420-fast-int-progressive.jpg

@@ -8,7 +8,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-pri func decoder.do_decode_frame_vp8l?(dst: ptr base.pixel_buffer, src: base.io_reader, blend: base.pixel_blend, workbuf: slice base.u8, opts: nptr base.decode_frame_options) {
+pri func decoder.do_decode_frame_vp8l?(dst: nptr base.pixel_buffer, src: base.io_reader, blend: base.pixel_blend, workbuf: slice base.u8, opts: nptr base.decode_frame_options) {
     var c8             : base.u8
     var has_more       : base.u32[..= 1]
     var width          : base.u32[..= 0x4000]
@@ -426,7 +426,7 @@ pri func decoder.decode_pixels?(dst: slice base.u8, src: base.io_reader, width: 
             tile_size_log2: args.tile_size_log2)
 }
 
-pri func decoder.swizzle!(dst: ptr base.pixel_buffer, src: roslice base.u8, blend: base.pixel_blend) base.status {
+pri func decoder.swizzle!(dst: nptr base.pixel_buffer, src: roslice base.u8, blend: base.pixel_blend) base.status {
     var status              : base.status
     var dst_pixfmt          : base.pixel_format
     var dst_bits_per_pixel  : base.u32[..= 256]
@@ -437,6 +437,10 @@ pri func decoder.swizzle!(dst: ptr base.pixel_buffer, src: roslice base.u8, blen
     var src_bytes_per_row   : base.u64
     var dst                 : slice base.u8
     var y                   : base.u32
+
+    if args.dst == nullptr {
+        return ok
+    }
 
     status = this.swizzler.prepare!(
             dst_pixfmt: args.dst.pixel_format(),

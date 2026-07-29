@@ -482,6 +482,11 @@ typedef uint8_t wuffs_base__pixel_blend;
 #define WUFFS_BASE__PIXEL_BLEND__SRC ((wuffs_base__pixel_blend)0)
 #define WUFFS_BASE__PIXEL_BLEND__SRC_OVER ((wuffs_base__pixel_blend)1)
 
+static inline wuffs_base__pixel_blend  //
+wuffs_base__make_pixel_blend(uint8_t repr) {
+  return repr;
+}
+
 // --------
 
 // wuffs_base__pixel_alpha_transparency is a pixel format's alpha channel
