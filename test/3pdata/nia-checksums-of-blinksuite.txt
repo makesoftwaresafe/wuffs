@@ -97,7 +97,7 @@ BAD 7c80a001 test/3pdata/blinksuite/invalid-animated-webp.webp
 BAD 1e37d000 test/3pdata/blinksuite/invalid-animated-webp2.webp
 BAD 97b2b706 test/3pdata/blinksuite/invalid-animated-webp3.webp
 BAD 145962c5 test/3pdata/blinksuite/invalid-animated-webp4.webp
-BAD 67a2ece0 test/3pdata/blinksuite/invalid_vp8_vp8x.webp
+OK. 2ba1fc10 test/3pdata/blinksuite/invalid_vp8_vp8x.webp
 OK. 0da5f37e test/3pdata/blinksuite/jpeg-height-exif-orientation.jpg
 OK. 4409dca6 test/3pdata/blinksuite/large-gif-checkerboard.gif
 OK. d67648b6 test/3pdata/blinksuite/large.webp
@@ -182,7 +182,7 @@ OK. 16c2c0fe test/3pdata/blinksuite/test-load.jpg
 OK. 6fbda804 test/3pdata/blinksuite/test.webp
 OK. eb16e76c test/3pdata/blinksuite/test2.webp
 OK. 19d3a207 test/3pdata/blinksuite/test3.webp
-OK. 22cc757c test/3pdata/blinksuite/truncated.webp
+OK. 56224156 test/3pdata/blinksuite/truncated.webp
 BAD 1dfa35c6 test/3pdata/blinksuite/truncated2.webp
 BAD b16eb1a2 test/3pdata/blinksuite/webp-animated-icc-xmp.webp
 BAD 45030792 test/3pdata/blinksuite/webp-animated-large.webp

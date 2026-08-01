@@ -85278,7 +85278,7 @@ wuffs_vp8__decoder__set_quirk(
     return wuffs_base__make_status(NULL);
   } else if (a_key == 1836840961u) {
     v_w = ((uint32_t)(a_value));
-    v_h = ((uint32_t)(a_value));
+    v_h = ((uint32_t)((a_value >> 32u)));
     if ((v_w < 1u) ||
         (16383u < v_w) ||
         (v_h < 1u) ||

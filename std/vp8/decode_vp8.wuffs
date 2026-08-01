@@ -251,7 +251,7 @@ pub func decoder.set_quirk!(key: base.u32, value: base.u64) base.status {
 
     } else if args.key == QUIRK_WIDTH_AND_HEIGHT {
         w = (args.value & 0xFFFF_FFFF) as base.u32
-        h = (args.value & 0xFFFF_FFFF) as base.u32
+        h = (args.value >> 32) as base.u32
         if (w < 1) or (0x3FFF < w) or (h < 1) or (0x3FFF < h) {
             return "#bad QUIRK_WIDTH_AND_HEIGHT"
         }
