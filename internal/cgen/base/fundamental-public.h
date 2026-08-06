@@ -1466,7 +1466,7 @@ wuffs_base__make_slice_u64(uint64_t* ptr, size_t len) {
 static inline wuffs_base__slice_u8  //
 wuffs_base__make_slice_u8_ij(uint8_t* ptr, size_t i, size_t j) {
   wuffs_base__slice_u8 ret;
-  ret.ptr = ptr ? (ptr + i) : NULL;
+  ret.ptr = i ? (ptr + i) : ptr;
   ret.len = (j >= i) ? (j - i) : 0;
   return ret;
 }
@@ -1474,7 +1474,7 @@ wuffs_base__make_slice_u8_ij(uint8_t* ptr, size_t i, size_t j) {
 static inline wuffs_base__slice_u16  //
 wuffs_base__make_slice_u16_ij(uint16_t* ptr, size_t i, size_t j) {
   wuffs_base__slice_u16 ret;
-  ret.ptr = ptr ? (ptr + i) : NULL;
+  ret.ptr = i ? (ptr + i) : ptr;
   ret.len = (j >= i) ? (j - i) : 0;
   return ret;
 }
@@ -1482,7 +1482,7 @@ wuffs_base__make_slice_u16_ij(uint16_t* ptr, size_t i, size_t j) {
 static inline wuffs_base__slice_u32  //
 wuffs_base__make_slice_u32_ij(uint32_t* ptr, size_t i, size_t j) {
   wuffs_base__slice_u32 ret;
-  ret.ptr = ptr ? (ptr + i) : NULL;
+  ret.ptr = i ? (ptr + i) : ptr;
   ret.len = (j >= i) ? (j - i) : 0;
   return ret;
 }
@@ -1490,7 +1490,7 @@ wuffs_base__make_slice_u32_ij(uint32_t* ptr, size_t i, size_t j) {
 static inline wuffs_base__slice_u64  //
 wuffs_base__make_slice_u64_ij(uint64_t* ptr, size_t i, size_t j) {
   wuffs_base__slice_u64 ret;
-  ret.ptr = ptr ? (ptr + i) : NULL;
+  ret.ptr = i ? (ptr + i) : ptr;
   ret.len = (j >= i) ? (j - i) : 0;
   return ret;
 }
@@ -1631,7 +1631,12 @@ wuffs_base__slice_u8__overlaps(wuffs_base__slice_u8 s, wuffs_base__slice_u8 t) {
 static inline wuffs_base__slice_u8  //
 wuffs_base__slice_u8__subslice_i(wuffs_base__slice_u8 s, uint64_t i) {
   if ((i <= SIZE_MAX) && (i <= s.len)) {
-    return wuffs_base__make_slice_u8(s.ptr + i, ((size_t)(s.len - i)));
+    // The "i ? (s.ptr + i) : s.ptr" expression is equivalent to the plain
+    // "s.ptr + i", except for the fact that in C (prior to C29), but not in
+    // C++, "NULL + 0" is, technically, undefined behavior (and triggers
+    // ubsan). See C29 N3322 and https://reviews.llvm.org/D67122
+    return wuffs_base__make_slice_u8(i ? (s.ptr + i) : s.ptr,
+                                     ((size_t)(s.len - i)));
   }
   return wuffs_base__empty_slice_u8();
 }
@@ -1655,7 +1660,12 @@ wuffs_base__slice_u8__subslice_ij(wuffs_base__slice_u8 s,
                                   uint64_t i,
                                   uint64_t j) {
   if ((i <= j) && (j <= SIZE_MAX) && (j <= s.len)) {
-    return wuffs_base__make_slice_u8(s.ptr + i, ((size_t)(j - i)));
+    // The "i ? (s.ptr + i) : s.ptr" expression is equivalent to the plain
+    // "s.ptr + i", except for the fact that in C (prior to C29), but not in
+    // C++, "NULL + 0" is, technically, undefined behavior (and triggers
+    // ubsan). See C29 N3322 and https://reviews.llvm.org/D67122
+    return wuffs_base__make_slice_u8(i ? (s.ptr + i) : s.ptr,
+                                     ((size_t)(j - i)));
   }
   return wuffs_base__empty_slice_u8();
 }
