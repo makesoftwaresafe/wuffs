@@ -60,18 +60,35 @@ func main1() error {
 				}
 
 			} else if len(arg) == 12 {
-				// Assume that arg is of the form "aaaa/bbbb/cc".
-				arg0 := arg[0:4]
-				arg1 := arg[5:9]
-				arg2 := ".." + arg[10:12]
-				c0, ok0 := base38.Encode(arg0)
-				c1, ok1 := base38.Encode(arg1)
-				c2, ok2 := base38.Encode(arg2)
-				if ok0 && ok1 && ok2 {
-					c := (uint64(c0) << 32) | (uint64(c1) << 11) | uint64(c2)
-					code := fmt.Sprintf("0x%014X", c)
-					fmt.Printf("%s\t%16d\t%s\n", underscore8(code), c, arg)
-					continue
+				if (arg[4] == '/') && (arg[7] == '/') {
+					// Assume that arg is of the form "aaaa/bb/cccc".
+					arg0 := arg[0:4]
+					arg1 := ".." + arg[5:7]
+					arg2 := arg[8:12]
+					c0, ok0 := base38.Encode(arg0)
+					c1, ok1 := base38.Encode(arg1)
+					c2, ok2 := base38.Encode(arg2)
+					if ok0 && ok1 && ok2 {
+						c := (uint64(c0) << 32) | (uint64(c1) << 21) | uint64(c2)
+						code := fmt.Sprintf("0x%014X", c)
+						fmt.Printf("%s\t%16d\t%s\n", underscore8(code), c, arg)
+						continue
+					}
+
+				} else if (arg[4] == '/') && (arg[9] == '/') {
+					// Assume that arg is of the form "aaaa/bbbb/cc".
+					arg0 := arg[0:4]
+					arg1 := arg[5:9]
+					arg2 := ".." + arg[10:12]
+					c0, ok0 := base38.Encode(arg0)
+					c1, ok1 := base38.Encode(arg1)
+					c2, ok2 := base38.Encode(arg2)
+					if ok0 && ok1 && ok2 {
+						c := (uint64(c0) << 32) | (uint64(c1) << 11) | uint64(c2)
+						code := fmt.Sprintf("0x%014X", c)
+						fmt.Printf("%s\t%16d\t%s\n", underscore8(code), c, arg)
+						continue
+					}
 				}
 
 			} else if len(arg) == 14 {

@@ -117,6 +117,39 @@ Some more examples:
 - `0x197816_7DF74000 = "text/html/.." = "text/html"`
 - `0x197816_B215E800 = "text/plai/.." = "text/plain"`
 
+For another fits-in-53-bits example, BCP 47 language tags can use base38
+3+1/2+2/1+1 encoding, `lllx/ssrr/yz`, where the l, s and r base-38 digits hold
+the commonly-used language, script and region subtags. The x, y and z base-38
+digits hold the rarely-used extlang, variant and extension or other subtags.
+
+- `0x0B2084_000004C0 = "ca../..../v." = ca-valencia`
+- `0x0D1688_00000000 = "en../..../.." = en`
+- `0x0D32BC_00060000 = "es../..41/.." = es-419`
+- `0x0E0370_000FC800 = "fr../..ca/.." = fr-CA`
+- `0x138442_00000000 = "mas./..../.." = mas`
+- `0x1DFF1E_7DF14800 = "yue./hthk/.." = yue-Hant-HK`
+- `0x1E89E8_7DAE2000 = "zh../hs../.." = zh-Hans`
+
+
+### Powers of 38
+
+In case you want to roll your own bit-packing.
+
+```
+38 **  1  =                      38  =  0x________________26  ≈   6 bits
+38 **  2  =                    1444  =  0x_______________5A4  ≈  11 bits
+38 **  3  =                   54872  =  0x______________D658  ≈  16 bits
+38 **  4  =                2_085136  =  0x____________1FD110  ≈  21 bits
+38 **  5  =               79_235168  =  0x___________4B90860  ≈  27 bits
+38 **  6  =             3010_936384  =  0x__________B3773E40  ≈  32 bits
+38 **  7  =           114415_582592  =  0x_______1A_A3B33D80  ≈  37 bits
+38 **  8  =         4_347792_138496  =  0x______3F4_4C9B2100  ≈  42 bits
+38 **  9  =       165_216101_262848  =  0x_____9643_5F06E600  ≈  48 bits
+38 ** 10  =      6278_211847_988224  =  0x___164E00_1B062400  ≈  53 bits
+38 ** 11  =    238572_050223_552512  =  0x__34F9404_02E95800  ≈  58 bits
+38 ** 12  =  9_065737_908494_995456  =  0x_7DCFF898_6EA31000  ≈  63 bits
+```
+
 
 ### Base38 Alphabet
 
