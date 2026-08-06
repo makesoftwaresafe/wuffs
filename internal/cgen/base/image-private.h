@@ -75,3 +75,8 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
 
 #define wuffs_base__utility__make_pixel_blend wuffs_base__make_pixel_blend
 #define wuffs_base__utility__make_pixel_format wuffs_base__make_pixel_format
+
+static inline uint8_t  //
+wuffs_base__utility__demake_pixel_blend(wuffs_base__pixel_blend a) {
+  return a;
+}

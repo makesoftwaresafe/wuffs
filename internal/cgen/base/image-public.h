@@ -32,6 +32,10 @@
 // 0xAARRGGBB (Alpha most significant, Blue least), regardless of endianness.
 typedef uint32_t wuffs_base__color_u32_argb_premul;
 
+// wuffs_base__color_u32_argb_nonpremul is non-premultiplied version of
+// wuffs_base__color_u32_argb_premul.
+typedef uint32_t wuffs_base__color_u32_argb_nonpremul;
+
 // wuffs_base__color_u32_argb_premul__is_valid returns whether c's Red, Green
 // and Blue channels are all less than or equal to its Alpha channel. c uses
 // premultiplied alpha, so 50% opaque 100% saturated red is 0x7F7F_0000 and a
@@ -249,6 +253,21 @@ wuffs_base__color_u64_argb_premul__as__color_u64_argb_nonpremul(
   b = (b * 0xFFFF) / a;
 
   return (a << 48) | (r << 32) | (g << 16) | (b << 0);
+}
+
+static inline uint64_t  //
+wuffs_base__color_u64_argb_nonpremul__as__color_u64_argb_premul(
+    uint64_t argb_nonpremul) {
+  uint32_t a = 0xFFFF & (argb_nonpremul >> 48);
+
+  uint32_t r = 0xFFFF & (argb_nonpremul >> 32);
+  r = (r * a) / 0xFFFF;
+  uint32_t g = 0xFFFF & (argb_nonpremul >> 16);
+  g = (g * a) / 0xFFFF;
+  uint32_t b = 0xFFFF & (argb_nonpremul >> 0);
+  b = (b * a) / 0xFFFF;
+
+  return (a << 24) | (r << 16) | (g << 8) | (b << 0);
 }
 
 static inline uint8_t  //
@@ -868,13 +887,21 @@ wuffs_base__pixel_subsampling::denominator_y(uint32_t plane) const {
 //
 // For CMY, C = (100% - R), M = (100% - G) and Y = (100% - B). Black (K), if
 // present, then modulates the three RGB values.
+//
+// ----
+//
+// The 0x02 bit means the fourth channel is an alpha channel and, if set, then
+// the 0x01 bit gives the blend mode (WUFFS_BASE__PIXEL_BLEND__SRC is 0,
+// WUFFS_BASE__PIXEL_BLEND__SRC_OVER is 1).
 
 // clang-format off
 
-#define WUFFS_BASE__YCC_MODEL__BT_601_FULL_RANGE            0x00
-#define WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE          0x01
-#define WUFFS_BASE__YCC_MODEL__RGB                          0x40
-#define WUFFS_BASE__YCC_MODEL__CMY                          0x80
+#define WUFFS_BASE__YCC_MODEL__BT_601_FULL_RANGE                     0x00
+#define WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE                   0x04
+#define WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC       0x06
+#define WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC_OVER  0x07
+#define WUFFS_BASE__YCC_MODEL__RGB                                   0x40
+#define WUFFS_BASE__YCC_MODEL__CMY                                   0x80
 
 // clang-format on
 
@@ -1509,6 +1536,10 @@ typedef struct wuffs_base__pixel_buffer__struct {
   inline wuffs_base__status set_color_u32_fill_rect(
       wuffs_base__rect_ie_u32 rect,
       wuffs_base__color_u32_argb_premul color);
+  inline wuffs_base__status set_color_u32_nonpremul_at(
+      uint32_t x,
+      uint32_t y,
+      wuffs_base__color_u32_argb_nonpremul color);
   inline bool is_opaque();
 #endif  // __cplusplus
 
@@ -1721,6 +1752,13 @@ wuffs_base__pixel_buffer__set_color_u32_fill_rect(
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color);
 
+WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
+wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(
+    wuffs_base__pixel_buffer* pb,
+    uint32_t x,
+    uint32_t y,
+    wuffs_base__color_u32_argb_nonpremul color);
+
 WUFFS_BASE__MAYBE_STATIC bool  //
 wuffs_base__pixel_buffer__is_opaque(const wuffs_base__pixel_buffer* pb);
 
@@ -1781,6 +1819,15 @@ wuffs_base__pixel_buffer::set_color_u32_fill_rect(
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color) {
   return wuffs_base__pixel_buffer__set_color_u32_fill_rect(this, rect, color);
+}
+
+inline wuffs_base__status  //
+wuffs_base__pixel_buffer::set_color_u32_nonpremul_at(
+    uint32_t x,
+    uint32_t y,
+    wuffs_base__color_u32_argb_nonpremul color) {
+  return wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(this, x, y,
+                                                              color);
 }
 
 inline bool  //

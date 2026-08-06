@@ -116,6 +116,47 @@ typedef void (*wuffs_private_impl__swizzle_ycc__convert_4_func)(
     const uint8_t* up3);
 
 static void  //
+wuffs_private_impl__swizzle_ycca_bt601sr_src__convert_4_general(
+    wuffs_base__pixel_buffer* dst,
+    uint32_t x,
+    uint32_t x_end,
+    uint32_t y,
+    const uint8_t* up0,
+    const uint8_t* up1,
+    const uint8_t* up2,
+    const uint8_t* up3) {
+  for (; x < x_end; x++) {
+    uint32_t color =                                   //
+        wuffs_base__color_ycc_bt601sr__as__color_u32(  //
+            *up0++, *up1++, *up2++);
+    color &= 0xFFFFFFu;
+    color |= ((uint32_t)(*up3++)) << 24;
+    wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(dst, x, y, color);
+  }
+}
+
+static void  //
+wuffs_private_impl__swizzle_ycca_bt601sr_src_over__convert_4_general(
+    wuffs_base__pixel_buffer* dst,
+    uint32_t x,
+    uint32_t x_end,
+    uint32_t y,
+    const uint8_t* up0,
+    const uint8_t* up1,
+    const uint8_t* up2,
+    const uint8_t* up3) {
+  for (; x < x_end; x++) {
+    uint32_t color =                                   //
+        wuffs_base__color_ycc_bt601sr__as__color_u32(  //
+            *up0++, *up1++, *up2++);
+    color &= 0xFFFFFFu;
+    color |= ((uint32_t)(*up3++)) << 24;
+    wuffs_base__pixel_buffer__composite_color_u32_nonpremul_at(dst, x, y,
+                                                               color);
+  }
+}
+
+static void  //
 wuffs_private_impl__swizzle_cmyk__convert_4_general(
     wuffs_base__pixel_buffer* dst,
     uint32_t x,
@@ -1565,7 +1606,7 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   if (ycc_model >= WUFFS_BASE__YCC_MODEL__RGB) {
     conv3func = &wuffs_private_impl__swizzle_rgb__convert_3_general;
 
-  } else if (ycc_model == WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE) {
+  } else if (ycc_model >= WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE) {
     switch (dst->pixcfg.private_impl.pixfmt.repr) {
       case WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL:
       case WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL:
@@ -1710,14 +1751,27 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   }
 
   if ((h3 != 0u) || (v3 != 0u)) {
-    if (ycc_model == WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE) {
-      return wuffs_base__make_status(
-          wuffs_base__error__unsupported_pixel_swizzler_option);
+    wuffs_private_impl__swizzle_ycc__convert_4_func conv4func = NULL;
+    switch (ycc_model) {
+      case WUFFS_BASE__YCC_MODEL__BT_601_FULL_RANGE:
+        conv4func = &wuffs_private_impl__swizzle_ycck__convert_4_general;
+        break;
+      case WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC:
+        conv4func =
+            &wuffs_private_impl__swizzle_ycca_bt601sr_src__convert_4_general;
+        break;
+      case WUFFS_BASE__YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC_OVER:
+        conv4func =
+            &wuffs_private_impl__swizzle_ycca_bt601sr_src_over__convert_4_general;
+        break;
+      case WUFFS_BASE__YCC_MODEL__CMY:
+        conv4func = &wuffs_private_impl__swizzle_cmyk__convert_4_general;
+        break;
+      default:
+        return wuffs_base__make_status(
+            wuffs_base__error__unsupported_pixel_swizzler_option);
     }
-    wuffs_private_impl__swizzle_ycc__convert_4_func conv4func =
-        (ycc_model >= WUFFS_BASE__YCC_MODEL__RGB)
-            ? &wuffs_private_impl__swizzle_cmyk__convert_4_general
-            : &wuffs_private_impl__swizzle_ycck__convert_4_general;
+
     (*func4)(                                                 //
         dst, x_min_incl, x_max_excl, y_min_incl, y_max_excl,  //
         src0.ptr, src1.ptr, src2.ptr, src3.ptr,               //

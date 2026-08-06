@@ -125,7 +125,7 @@ test_wuffs_webp_decode_interface_vp8x_alpha_lossy() {
   return do_test__wuffs_base__image_decoder(
       wuffs_webp__decoder__upcast_as__wuffs_base__image_decoder(dec),
       "test/data/hippopotamus.masked-with-muybridge.lossy.webp", 0, SIZE_MAX,
-      36, 28, 0x7DF5F5F5);  // TODO: should be 0x7D787878, because PREMUL.
+      36, 28, 0x7D787878);
 }
 
 const char*  //

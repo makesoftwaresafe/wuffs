@@ -343,16 +343,43 @@ pri func decoder.copy_from_yuv_cache!(
 
 pri func decoder.swizzle!(
         dst: ptr base.pixel_buffer,
+        blend: base.pixel_blend,
         workbuf: slice base.u8) base.status {
-    var status : base.status
+    var wh        : base.u64[..= 0xFFF_8001]
+    var prefix    : slice base.u8
+    var suffix    : slice base.u8
+    var has_alpha : base.u32[..= 1]
+    var ycc_model : base.u32[..= 0xFF]
+    var status    : base.status
+
+    if this.quirk_has_alpha_side_channel {
+        if this.quirk_width_and_height == 0 {
+            return "#inconsistent width and height"
+        }
+        wh = (this.width * this.height) as base.u64
+        if wh > args.workbuf.length() {
+            return base."#bad workbuf length"
+        }
+        prefix = args.workbuf[.. wh]
+        suffix = args.workbuf[wh ..]
+        has_alpha = 1
+        ycc_model = base.YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC |
+                (0x01 & (this.util.demake_pixel_blend(a: args.blend) as base.u32))
+
+    } else {
+        prefix = this.util.empty_slice_u8()
+        suffix = args.workbuf
+        has_alpha = 0
+        ycc_model = base.YCC_MODEL__BT_601_STUDIO_RANGE
+    }
 
     if (this.workbuf_yuv_y_end > this.workbuf_yuv_u_end) or
             (this.workbuf_yuv_u_end > this.workbuf_yuv_v_end) or
-            (this.workbuf_yuv_v_end > args.workbuf.length()) {
+            (this.workbuf_yuv_v_end > suffix.length()) {
         return base."#bad workbuf length"
     }
-    assert this.workbuf_yuv_u_end <= args.workbuf.length() via "a <= b: a <= c; c <= b"(c: this.workbuf_yuv_v_end)
-    assert this.workbuf_yuv_y_end <= args.workbuf.length() via "a <= b: a <= c; c <= b"(c: this.workbuf_yuv_u_end)
+    assert this.workbuf_yuv_u_end <= suffix.length() via "a <= b: a <= c; c <= b"(c: this.workbuf_yuv_v_end)
+    assert this.workbuf_yuv_y_end <= suffix.length() via "a <= b: a <= c; c <= b"(c: this.workbuf_yuv_u_end)
 
     status = this.swizzler.swizzle_ycck!(
             dst: args.dst,
@@ -361,31 +388,31 @@ pri func decoder.swizzle!(
             x_max_excl: this.width,
             y_min_incl: 0,
             y_max_excl: this.height,
-            src0: args.workbuf[.. this.workbuf_yuv_y_end],
-            src1: args.workbuf[this.workbuf_yuv_y_end .. this.workbuf_yuv_u_end],
-            src2: args.workbuf[this.workbuf_yuv_u_end .. this.workbuf_yuv_v_end],
-            src3: this.util.empty_slice_u8(),
+            src0: suffix[.. this.workbuf_yuv_y_end],
+            src1: suffix[this.workbuf_yuv_y_end .. this.workbuf_yuv_u_end],
+            src2: suffix[this.workbuf_yuv_u_end .. this.workbuf_yuv_v_end],
+            src3: prefix,
             width0: this.mbw * 16,
             width1: this.mbw * 8,
             width2: this.mbw * 8,
-            width3: 0,
+            width3: this.width * has_alpha,
             height0: this.mbh * 16,
             height1: this.mbh * 8,
             height2: this.mbh * 8,
-            height3: 0,
+            height3: this.height * has_alpha,
             stride0: this.mbw * 16,
             stride1: this.mbw * 8,
             stride2: this.mbw * 8,
-            stride3: 0,
+            stride3: this.width * has_alpha,
             h0: 2,
             h1: 1,
             h2: 1,
-            h3: 0,
+            h3: (2 * has_alpha) as base.u8,
             v0: 2,
             v1: 1,
             v2: 1,
-            v3: 0,
-            ycc_model: base.YCC_MODEL__BT_601_STUDIO_RANGE as base.u8,
+            v3: (2 * has_alpha) as base.u8,
+            ycc_model: ycc_model as base.u8,
             ycc_upsampling: base.YCC_UPSAMPLING__FANCY_LIKE_LIBWEBP as base.u8,
             scratch_buffer_2k: this.swizzle_ycck_scratch_buffer_2k[..])
     return status

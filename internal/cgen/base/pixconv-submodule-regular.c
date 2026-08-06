@@ -50,6 +50,26 @@ wuffs_private_impl__swizzle_xxxx__y__x86_sse42(uint8_t* dst_ptr,
 // --------
 
 static inline uint32_t  //
+wuffs_private_impl__composite_nonpremul_nonpremul_u32_axxx(
+    uint32_t dst_nonpremul,
+    uint32_t src_nonpremul);
+
+static inline uint64_t  //
+wuffs_private_impl__composite_nonpremul_nonpremul_u64_axxx(
+    uint64_t dst_nonpremul,
+    uint64_t src_nonpremul);
+
+static inline uint32_t  //
+wuffs_private_impl__composite_premul_nonpremul_u32_axxx(uint32_t dst_premul,
+                                                        uint32_t src_nonpremul);
+
+static inline uint64_t  //
+wuffs_private_impl__composite_premul_nonpremul_u64_axxx(uint64_t dst_premul,
+                                                        uint64_t src_nonpremul);
+
+// --------
+
+static inline uint32_t  //
 wuffs_private_impl__color_u64__as__color_u32__swap_u32_argb_abgr(uint64_t c) {
   uint32_t a = ((uint32_t)(0xFF & (c >> 56)));
   uint32_t r = ((uint32_t)(0xFF & (c >> 40)));
@@ -260,6 +280,365 @@ wuffs_base__pixel_buffer__set_color_u32_at(
       wuffs_base__poke_u32le__no_bounds_check(
           row + (4 * ((size_t)x)), wuffs_base__color_swap_u32_argb_abgr(color));
       break;
+
+    default:
+      // TODO: support more formats.
+      return wuffs_base__make_status(wuffs_base__error__unsupported_option);
+  }
+
+  return wuffs_base__make_status(NULL);
+}
+
+WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
+wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(
+    wuffs_base__pixel_buffer* pb,
+    uint32_t x,
+    uint32_t y,
+    wuffs_base__color_u32_argb_nonpremul color) {
+  if (!pb) {
+    return wuffs_base__make_status(wuffs_base__error__bad_receiver);
+  }
+  if ((x >= pb->pixcfg.private_impl.width) ||
+      (y >= pb->pixcfg.private_impl.height)) {
+    return wuffs_base__make_status(wuffs_base__error__bad_argument);
+  }
+
+  if (wuffs_base__pixel_format__is_planar(&pb->pixcfg.private_impl.pixfmt)) {
+    // TODO: support planar formats.
+    return wuffs_base__make_status(wuffs_base__error__unsupported_option);
+  }
+
+  size_t stride = pb->private_impl.planes[0].stride;
+  uint8_t* row = pb->private_impl.planes[0].ptr + (stride * ((size_t)y));
+
+  switch (pb->pixcfg.private_impl.pixfmt.repr) {
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL:
+    case WUFFS_BASE__PIXEL_FORMAT__BGRX:
+      wuffs_base__poke_u32le__no_bounds_check(
+          row + (4 * ((size_t)x)),
+          wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+              color));
+      break;
+
+      // Common formats above. Rarer formats below.
+
+    case WUFFS_BASE__PIXEL_FORMAT__Y:
+      wuffs_base__poke_u8__no_bounds_check(
+          row + ((size_t)x),
+          wuffs_base__color_u32_argb_premul__as__color_u8_gray(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__Y_16LE:
+      wuffs_base__poke_u16le__no_bounds_check(
+          row + (2 * ((size_t)x)),
+          wuffs_base__color_u32_argb_premul__as__color_u16_gray(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__Y_16BE:
+      wuffs_base__poke_u16be__no_bounds_check(
+          row + (2 * ((size_t)x)),
+          wuffs_base__color_u32_argb_premul__as__color_u16_gray(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL:
+      wuffs_base__poke_u8__no_bounds_check(
+          row + (2 * ((size_t)x)),
+          wuffs_base__color_u32_argb_premul__as__color_u8_gray(color |
+                                                               0xFF000000));
+      wuffs_base__poke_u8__no_bounds_check(row + (2 * ((size_t)x)) + 1,
+                                           color >> 24);
+      break;
+
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_NONPREMUL:
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_PREMUL:
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_BINARY:
+      wuffs_base__poke_u8__no_bounds_check(
+          row + ((size_t)x),
+          wuffs_base__pixel_palette__closest_element(
+              wuffs_base__pixel_buffer__palette(pb),
+              pb->pixcfg.private_impl.pixfmt,
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGR_565:
+      wuffs_base__poke_u16le__no_bounds_check(
+          row + (2 * ((size_t)x)),
+          wuffs_base__color_u32_argb_premul__as__color_u16_rgb_565(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__BGR:
+      wuffs_base__poke_u24le__no_bounds_check(
+          row + (3 * ((size_t)x)),
+          wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+              color));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL:
+      wuffs_base__poke_u32le__no_bounds_check(row + (4 * ((size_t)x)), color);
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE:
+      wuffs_base__poke_u64le__no_bounds_check(
+          row + (8 * ((size_t)x)), wuffs_base__color_u32__as__color_u64(color));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL_4X16LE:
+      wuffs_base__poke_u64le__no_bounds_check(
+          row + (8 * ((size_t)x)),
+          wuffs_base__color_u64_argb_nonpremul__as__color_u64_argb_premul(
+              wuffs_base__color_u32__as__color_u64(color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_BINARY:
+      wuffs_base__poke_u32le__no_bounds_check(
+          row + (4 * ((size_t)x)),
+          (color >> 31)
+              ? (wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                     color) |
+                 0xFF000000)
+              : 0);
+      break;
+
+    case WUFFS_BASE__PIXEL_FORMAT__RGB:
+      wuffs_base__poke_u24le__no_bounds_check(
+          row + (3 * ((size_t)x)),
+          wuffs_base__color_swap_u32_argb_abgr(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL:
+      wuffs_base__poke_u32le__no_bounds_check(
+          row + (4 * ((size_t)x)), wuffs_base__color_swap_u32_argb_abgr(color));
+      break;
+    case WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL:
+    case WUFFS_BASE__PIXEL_FORMAT__RGBX:
+      wuffs_base__poke_u32le__no_bounds_check(
+          row + (4 * ((size_t)x)),
+          wuffs_base__color_swap_u32_argb_abgr(
+              wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                  color)));
+      break;
+
+    default:
+      // TODO: support more formats.
+      return wuffs_base__make_status(wuffs_base__error__unsupported_option);
+  }
+
+  return wuffs_base__make_status(NULL);
+}
+
+static inline wuffs_base__status  //
+wuffs_base__pixel_buffer__composite_color_u32_nonpremul_at(
+    wuffs_base__pixel_buffer* pb,
+    uint32_t x,
+    uint32_t y,
+    wuffs_base__color_u32_argb_nonpremul color) {
+  if (!pb) {
+    return wuffs_base__make_status(wuffs_base__error__bad_receiver);
+  }
+  if ((x >= pb->pixcfg.private_impl.width) ||
+      (y >= pb->pixcfg.private_impl.height)) {
+    return wuffs_base__make_status(wuffs_base__error__bad_argument);
+  }
+
+  if (wuffs_base__pixel_format__is_planar(&pb->pixcfg.private_impl.pixfmt)) {
+    // TODO: support planar formats.
+    return wuffs_base__make_status(wuffs_base__error__unsupported_option);
+  }
+
+  size_t stride = pb->private_impl.planes[0].stride;
+  uint8_t* row = pb->private_impl.planes[0].ptr + (stride * ((size_t)y));
+
+  switch (pb->pixcfg.private_impl.pixfmt.repr) {
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGRX: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr) | 0xFF000000;
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+      // Common formats above. Rarer formats below.
+
+    case WUFFS_BASE__PIXEL_FORMAT__Y: {
+      uint8_t* ptr = row + ((size_t)x);
+      uint32_t dst = 0xFF000000 | (0x00010101 * ((uint32_t)(*ptr)));
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      *ptr = ((uint8_t)(dst));
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__Y_16LE: {
+      uint8_t* ptr = row + (2 * ((size_t)x));
+      uint64_t dst =
+          0xFFFF000000000000 |
+          (0x000100010001 *
+           ((uint64_t)(wuffs_base__peek_u16le__no_bounds_check(ptr))));
+      dst = wuffs_private_impl__composite_premul_nonpremul_u64_axxx(
+          dst, wuffs_base__color_u32__as__color_u64(color));
+      wuffs_base__poke_u16le__no_bounds_check(ptr, ((uint16_t)(dst)));
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__Y_16BE: {
+      uint8_t* ptr = row + (2 * ((size_t)x));
+      uint64_t dst =
+          0xFFFF000000000000 |
+          (0x000100010001 *
+           ((uint64_t)(wuffs_base__peek_u16be__no_bounds_check(ptr))));
+      dst = wuffs_private_impl__composite_premul_nonpremul_u64_axxx(
+          dst, wuffs_base__color_u32__as__color_u64(color));
+      wuffs_base__poke_u16be__no_bounds_check(ptr, ((uint16_t)(dst)));
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL: {
+      uint8_t* ptr = row + (2 * ((size_t)x));
+      uint32_t dst =
+          (((uint32_t)(ptr[1])) << 24) | (((uint32_t)(ptr[0])) * 0x00010101);
+      dst = wuffs_private_impl__composite_nonpremul_nonpremul_u32_axxx(dst,
+                                                                       color);
+      ptr[0] = wuffs_base__color_u32_argb_premul__as__color_u8_gray(dst |
+                                                                    0xFF000000);
+      ptr[1] = dst >> 24;
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_NONPREMUL: {
+      wuffs_base__slice_u8 palette = wuffs_base__pixel_buffer__palette(pb);
+      if (palette.len) {
+        uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(
+            palette.ptr + (4 * ((size_t)row[x])));
+        dst = wuffs_private_impl__composite_nonpremul_nonpremul_u32_axxx(dst,
+                                                                         color);
+        row[x] = wuffs_base__pixel_palette__closest_element(
+            wuffs_base__pixel_buffer__palette(pb),
+            pb->pixcfg.private_impl.pixfmt,
+            wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                dst));
+      }
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_PREMUL:
+    case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_BINARY: {
+      wuffs_base__slice_u8 palette = wuffs_base__pixel_buffer__palette(pb);
+      if (palette.len) {
+        uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(
+            palette.ptr + (4 * ((size_t)row[x])));
+        dst =
+            wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+        row[x] = wuffs_base__pixel_palette__closest_element(
+            wuffs_base__pixel_buffer__palette(pb),
+            pb->pixcfg.private_impl.pixfmt, dst);
+      }
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGR_565: {
+      uint8_t* ptr = row + (2 * ((size_t)x));
+      uint32_t dst = wuffs_base__color_u16_rgb_565__as__color_u32_argb_premul(
+          wuffs_base__peek_u16le__no_bounds_check(ptr));
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      wuffs_base__poke_u16le__no_bounds_check(
+          ptr, wuffs_base__color_u32_argb_premul__as__color_u16_rgb_565(dst));
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGR: {
+      uint8_t* ptr = row + (3 * ((size_t)x));
+      uint32_t dst = 0xFF000000 | wuffs_base__peek_u24le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      wuffs_base__poke_u24le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_nonpremul_nonpremul_u32_axxx(dst,
+                                                                       color);
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE: {
+      uint8_t* ptr = row + (8 * ((size_t)x));
+      uint64_t dst = wuffs_base__peek_u64le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_nonpremul_nonpremul_u64_axxx(
+          dst, wuffs_base__color_u32__as__color_u64(color));
+      wuffs_base__poke_u64le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL_4X16LE: {
+      uint8_t* ptr = row + (8 * ((size_t)x));
+      uint64_t dst = wuffs_base__peek_u64le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_premul_nonpremul_u64_axxx(
+          dst, wuffs_base__color_u32__as__color_u64(color));
+      wuffs_base__poke_u64le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__BGRA_BINARY: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
+      if (dst) {
+        dst =
+            wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
+      } else if (color >> 31) {
+        dst = (wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(
+                   color) |
+               0xFF000000);
+      }
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__RGB: {
+      uint8_t* ptr = row + (3 * ((size_t)x));
+      uint32_t dst = 0xFF000000 | wuffs_base__peek_u24le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(
+          dst, wuffs_base__color_swap_u32_argb_abgr(color));
+      wuffs_base__poke_u24le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_nonpremul_nonpremul_u32_axxx(
+          dst, wuffs_base__color_swap_u32_argb_abgr(color));
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(
+          dst, wuffs_base__color_swap_u32_argb_abgr(color));
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
+
+    case WUFFS_BASE__PIXEL_FORMAT__RGBX: {
+      uint8_t* ptr = row + (4 * ((size_t)x));
+      uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr) | 0xFF000000;
+      dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(
+          dst, wuffs_base__color_swap_u32_argb_abgr(color));
+      wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+      break;
+    }
 
     default:
       // TODO: support more formats.

@@ -628,45 +628,6 @@ pri func decoder.do_decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reade
         }
         yield? status
     }
-
-    if this.vp8x_alph_flags <> 0 {
-        this.apply_alph_chunk!(dst: args.dst, workbuf: args.workbuf)
-    }
-}
-
-// TODO: don't assume PIXEL_BLEND__SRC and PIXEL_FORMAT__BGRA_NONPREMUL.
-pri func decoder.apply_alph_chunk!(dst: ptr base.pixel_buffer, workbuf: slice base.u8) {
-    var y   : base.u32
-    var x   : base.u32
-    var tab : table base.u8
-    var row : slice base.u8
-    var d   : base.u64
-    var s   : base.u64
-
-    tab = args.dst.plane(p: 0)
-    y = 0
-    while y < this.height {
-        assert y < 0x4000 via "a < b: a < c; c <= b"(c: this.height)
-
-        row = tab.row_u32(y: y)
-
-        x = 0
-        while x < this.width,
-                inv y < 0x4000,
-        {
-            assert x < 0x4000 via "a < b: a < c; c <= b"(c: this.width)
-
-            d = ((x * 4) + 3) as base.u64
-            s = ((y * this.width) + x) as base.u64
-            if (d >= row.length()) or (s >= args.workbuf.length()) {
-                break
-            }
-            row[d] = args.workbuf[s]
-
-            x += 1
-        }
-        y += 1
-    }
 }
 
 pub func decoder.frame_dirty_rect() base.rect_ie_u32 {

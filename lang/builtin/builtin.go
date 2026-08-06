@@ -250,7 +250,9 @@ var Consts = [...]struct {
 	// ----
 
 	{t.IDU32, "0x00", "YCC_MODEL__BT_601_FULL_RANGE"},
-	{t.IDU32, "0x01", "YCC_MODEL__BT_601_STUDIO_RANGE"},
+	{t.IDU32, "0x04", "YCC_MODEL__BT_601_STUDIO_RANGE"},
+	{t.IDU32, "0x06", "YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC"},
+	{t.IDU32, "0x07", "YCC_MODEL__BT_601_STUDIO_RANGE__ALPHA__SRC_OVER"},
 	{t.IDU32, "0x40", "YCC_MODEL__RGB"},
 	{t.IDU32, "0x80", "YCC_MODEL__CMY"},
 
@@ -401,6 +403,7 @@ var funcsOther = [...]string{
 	// ---- utility
 
 	"utility.cpu_arch_is_32_bit() bool",
+	"utility.demake_pixel_blend(a: pixel_blend) u8",
 	"utility.empty_io_reader() io_reader",
 	"utility.empty_io_writer() io_writer",
 	"utility.empty_range_ii_u32() range_ii_u32",
