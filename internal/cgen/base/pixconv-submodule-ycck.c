@@ -156,9 +156,9 @@ wuffs_private_impl__swizzle_ycca_bt601sr_src__convert_4_bgra_premul(
     color |= ((uint32_t)(*up3++)) << 24;
 
     uint8_t* ptr = row + (4 * ((size_t)x));
-    uint32_t dst =
+    uint32_t dst_color =
         wuffs_base__color_u32_argb_nonpremul__as__color_u32_argb_premul(color);
-    wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+    wuffs_base__poke_u32le__no_bounds_check(ptr, dst_color);
   }
 }
 
@@ -204,9 +204,10 @@ wuffs_private_impl__swizzle_ycca_bt601sr_src_over__convert_4_bgra_premul(
     color |= ((uint32_t)(*up3++)) << 24;
 
     uint8_t* ptr = row + (4 * ((size_t)x));
-    uint32_t dst = wuffs_base__peek_u32le__no_bounds_check(ptr);
-    dst = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(dst, color);
-    wuffs_base__poke_u32le__no_bounds_check(ptr, dst);
+    uint32_t dst_color = wuffs_base__peek_u32le__no_bounds_check(ptr);
+    dst_color = wuffs_private_impl__composite_premul_nonpremul_u32_axxx(
+        dst_color, color);
+    wuffs_base__poke_u32le__no_bounds_check(ptr, dst_color);
   }
 }
 

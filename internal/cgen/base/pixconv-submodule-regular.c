@@ -349,7 +349,7 @@ wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(
           wuffs_base__color_u32_argb_premul__as__color_u8_gray(color |
                                                                0xFF000000));
       wuffs_base__poke_u8__no_bounds_check(row + (2 * ((size_t)x)) + 1,
-                                           color >> 24);
+                                           ((uint8_t)(color >> 24)));
       break;
 
     case WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_NONPREMUL:
@@ -509,7 +509,7 @@ wuffs_base__pixel_buffer__composite_color_u32_nonpremul_at(
                                                                        color);
       ptr[0] = wuffs_base__color_u32_argb_premul__as__color_u8_gray(dst |
                                                                     0xFF000000);
-      ptr[1] = dst >> 24;
+      ptr[1] = ((uint8_t)(dst >> 24));
       break;
     }
 

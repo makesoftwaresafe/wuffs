@@ -258,16 +258,16 @@ wuffs_base__color_u64_argb_premul__as__color_u64_argb_nonpremul(
 static inline uint64_t  //
 wuffs_base__color_u64_argb_nonpremul__as__color_u64_argb_premul(
     uint64_t argb_nonpremul) {
-  uint32_t a = 0xFFFF & (argb_nonpremul >> 48);
+  uint64_t a = 0xFFFF & (argb_nonpremul >> 48);
 
-  uint32_t r = 0xFFFF & (argb_nonpremul >> 32);
+  uint64_t r = 0xFFFF & (argb_nonpremul >> 32);
   r = (r * a) / 0xFFFF;
-  uint32_t g = 0xFFFF & (argb_nonpremul >> 16);
+  uint64_t g = 0xFFFF & (argb_nonpremul >> 16);
   g = (g * a) / 0xFFFF;
-  uint32_t b = 0xFFFF & (argb_nonpremul >> 0);
+  uint64_t b = 0xFFFF & (argb_nonpremul >> 0);
   b = (b * a) / 0xFFFF;
 
-  return (a << 24) | (r << 16) | (g << 8) | (b << 0);
+  return (a << 48) | (r << 32) | (g << 16) | (b << 0);
 }
 
 static inline uint8_t  //
