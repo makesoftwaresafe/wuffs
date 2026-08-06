@@ -131,7 +131,7 @@ wuffs_private_impl__swizzle_ycca_bt601sr_src__convert_4_general(
             *up0++, *up1++, *up2++);
     color &= 0xFFFFFFu;
     color |= ((uint32_t)(*up3++)) << 24;
-    wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(dst, x, y, color);
   }
 }
 
@@ -177,7 +177,7 @@ wuffs_private_impl__swizzle_cmyk__convert_4_general(
     r = ((r * w) + 0x7Fu) / 0xFFu;
     g = ((g * w) + 0x7Fu) / 0xFFu;
     b = ((b * w) + 0x7Fu) / 0xFFu;
-    wuffs_base__pixel_buffer__set_color_u32_at(
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
         dst, x, y, 0xFF000000u | (r << 16u) | (g << 8u) | (b << 0u));
   }
 }
@@ -204,7 +204,7 @@ wuffs_private_impl__swizzle_ycck__convert_4_general(
     r = ((r * w) + 0x7Fu) / 0xFFu;
     g = ((g * w) + 0x7Fu) / 0xFFu;
     b = ((b * w) + 0x7Fu) / 0xFFu;
-    wuffs_base__pixel_buffer__set_color_u32_at(
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
         dst, x, y, 0xFF000000u | (r << 16u) | (g << 8u) | (b << 0u));
   }
 }
@@ -234,7 +234,7 @@ wuffs_private_impl__swizzle_rgb__convert_3_general(
                      (((uint32_t)(*up0++)) << 16u) |  //
                      (((uint32_t)(*up1++)) << 8u) |   //
                      (((uint32_t)(*up2++)) << 0u);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -251,7 +251,7 @@ wuffs_private_impl__swizzle_ycc_bt601fr__convert_3_general(
     uint32_t color =                                   //
         wuffs_base__color_ycc_bt601fr__as__color_u32(  //
             *up0++, *up1++, *up2++);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -312,7 +312,7 @@ wuffs_private_impl__swizzle_ycc_bt601sr__convert_3_general(
     uint32_t color =                                   //
         wuffs_base__color_ycc_bt601sr__as__color_u32(  //
             *up0++, *up1++, *up2++);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -1518,7 +1518,7 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   }
 
   if (wuffs_base__pixel_format__is_planar(&dst->pixcfg.private_impl.pixfmt)) {
-    // TODO: see wuffs_base__pixel_buffer__set_color_u32_at's TODO.
+    // TODO: see wuffs_base__pixel_buffer__set_color_u32_argb_premul_at's TODO.
     return wuffs_base__make_status(
         wuffs_base__error__unsupported_pixel_swizzler_option);
   }
@@ -1593,7 +1593,8 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
       break;
 
     default:
-      // TODO: see wuffs_base__pixel_buffer__set_color_u32_at's TODO.
+      // TODO: see wuffs_base__pixel_buffer__set_color_u32_argb_premul_at's
+      // TODO.
       return wuffs_base__make_status(
           wuffs_base__error__unsupported_pixel_swizzler_option);
   }

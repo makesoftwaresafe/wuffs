@@ -507,8 +507,9 @@ redirect:
   }
   wuffs_base__pixel_buffer pixel_buffer = alloc_pixbuf_result.pixbuf;
   if (valid_background_color) {
-    wuffs_base__status pb_scufr_status = pixel_buffer.set_color_u32_fill_rect(
-        pixel_buffer.pixcfg.bounds(), background_color);
+    wuffs_base__status pb_scufr_status =
+        pixel_buffer.set_color_u32_argb_premul_fill_rect(
+            pixel_buffer.pixcfg.bounds(), background_color);
     if (pb_scufr_status.repr != nullptr) {
       return DecodeImageResult(pb_scufr_status.message());
     }

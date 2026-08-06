@@ -173,7 +173,7 @@ test_wuffs_webp_decode_many_small_reads() {
   wuffs_base__pixel_buffer pb = ((wuffs_base__pixel_buffer){});
   CHECK_STATUS("set_from_slice", wuffs_base__pixel_buffer__set_from_slice(
                                      &pb, &ic.pixcfg, g_pixel_slice_u8));
-  wuffs_base__pixel_buffer__set_color_u32_fill_rect(
+  wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
       &pb, wuffs_base__make_rect_ie_u32(0, 0, w, h), 0xFF234567);
 
   uint64_t m = wuffs_webp__decoder__workbuf_len(dec).min_incl;

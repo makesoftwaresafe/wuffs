@@ -261,9 +261,9 @@ test_wuffs_pixel_buffer_fill_rect() {
       // Reset to transparent black (or its closest approximation).
       for (uint32_t y = 0; y < height; y++) {
         for (uint32_t x = 0; x < width; x++) {
-          CHECK_STATUS(
-              "set_color_u32_at",
-              wuffs_base__pixel_buffer__set_color_u32_at(&dst_pixbuf, x, y, 0));
+          CHECK_STATUS("set_color_u32_argb_premul_at",
+                       wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
+                           &dst_pixbuf, x, y, 0));
         }
       }
 
@@ -275,9 +275,10 @@ test_wuffs_pixel_buffer_fill_rect() {
                                                      1 + (height / 2))
                       : wuffs_base__make_rect_ie_u32(width / 2, 0,
                                                      1 + (width / 2), height);
-      CHECK_STATUS("set_color_u32_fill_rect",
-                   wuffs_base__pixel_buffer__set_color_u32_fill_rect(
-                       &dst_pixbuf, rect, dsts[d].color));
+      CHECK_STATUS(
+          "set_color_u32_argb_premul_fill_rect",
+          wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
+              &dst_pixbuf, rect, dsts[d].color));
 
       // Check the middle dst pixel.
       wuffs_base__color_u32_argb_premul want_dst_pixel = dsts[d].color;
@@ -447,8 +448,8 @@ test_wuffs_pixel_swizzler_swizzle() {
     }
 
     // Set and check the middle src pixel.
-    CHECK_STATUS("set_color_u32_at",
-                 wuffs_base__pixel_buffer__set_color_u32_at(
+    CHECK_STATUS("set_color_u32_argb_premul_at",
+                 wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
                      &src_pixbuf, width / 2, height / 2, srcs[s].color));
     wuffs_base__color_u32_argb_premul have_src_pixel =
         wuffs_base__pixel_buffer__color_u32_at(&src_pixbuf, width / 2,
@@ -483,8 +484,8 @@ test_wuffs_pixel_swizzler_swizzle() {
 
       for (size_t b = 0; b < WUFFS_TESTLIB_ARRAY_SIZE(blends); b++) {
         // Set the middle dst pixel.
-        CHECK_STATUS("set_color_u32_at",
-                     wuffs_base__pixel_buffer__set_color_u32_at(
+        CHECK_STATUS("set_color_u32_argb_premul_at",
+                     wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
                          &dst_pixbuf, width / 2, height / 2, dsts[d].color));
 
         // Swizzle.

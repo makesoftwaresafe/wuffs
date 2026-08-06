@@ -176,7 +176,7 @@ wuffs_base__pixel_buffer__color_u32_at(const wuffs_base__pixel_buffer* pb,
 // --------
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
@@ -290,7 +290,7 @@ wuffs_base__pixel_buffer__set_color_u32_at(
 }
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
@@ -775,7 +775,7 @@ wuffs_private_impl__pixel_buffer__set_color_u32_fill_rect__xxxxxxxx(
 }
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_fill_rect(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
     wuffs_base__pixel_buffer* pb,
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color) {
@@ -847,7 +847,7 @@ wuffs_base__pixel_buffer__set_color_u32_fill_rect(
   for (y = rect.min_incl_y; y < rect.max_excl_y; y++) {
     uint32_t x;
     for (x = rect.min_incl_x; x < rect.max_excl_x; x++) {
-      wuffs_base__pixel_buffer__set_color_u32_at(pb, x, y, color);
+      wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(pb, x, y, color);
     }
   }
   return wuffs_base__make_status(NULL);

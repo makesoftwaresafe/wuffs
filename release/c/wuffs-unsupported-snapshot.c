@@ -5871,16 +5871,29 @@ typedef struct wuffs_base__pixel_buffer__struct {
   inline wuffs_base__slice_u8 palette_or_else(wuffs_base__slice_u8 fallback);
   inline wuffs_base__pixel_format pixel_format() const;
   inline wuffs_base__table_u8 plane(uint32_t p);
+  // Deprecated: use color_u32_argb_premul_at.
   inline wuffs_base__color_u32_argb_premul color_u32_at(uint32_t x,
                                                         uint32_t y) const;
+  inline wuffs_base__color_u32_argb_premul color_u32_argb_premul_at(
+      uint32_t x,
+      uint32_t y) const;
+  // Deprecated: use set_color_u32_argb_premul_at.
   inline wuffs_base__status set_color_u32_at(
       uint32_t x,
       uint32_t y,
       wuffs_base__color_u32_argb_premul color);
+  inline wuffs_base__status set_color_u32_argb_premul_at(
+      uint32_t x,
+      uint32_t y,
+      wuffs_base__color_u32_argb_premul color);
+  // Deprecated: use set_color_u32_argb_premul_fill_rect.
   inline wuffs_base__status set_color_u32_fill_rect(
       wuffs_base__rect_ie_u32 rect,
       wuffs_base__color_u32_argb_premul color);
-  inline wuffs_base__status set_color_u32_nonpremul_at(
+  inline wuffs_base__status set_color_u32_argb_premul_fill_rect(
+      wuffs_base__rect_ie_u32 rect,
+      wuffs_base__color_u32_argb_premul color);
+  inline wuffs_base__status set_color_u32_argb_nonpremul_at(
       uint32_t x,
       uint32_t y,
       wuffs_base__color_u32_argb_nonpremul color);
@@ -6078,26 +6091,39 @@ wuffs_base__pixel_buffer__plane(wuffs_base__pixel_buffer* pb, uint32_t p) {
   return ret;
 }
 
+// Deprecated: use the second name, not the first.
+#define wuffs_base__pixel_buffer__color_u32_at \
+  wuffs_base__pixel_buffer__color_u32_argb_premul_at
+
+// Deprecated: use the second name, not the first.
+#define wuffs_base__pixel_buffer__set_color_u32_at \
+  wuffs_base__pixel_buffer__set_color_u32_argb_premul_at
+
+// Deprecated: use the second name, not the first.
+#define wuffs_base__pixel_buffer__set_color_u32_fill_rect \
+  wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect
+
 WUFFS_BASE__MAYBE_STATIC wuffs_base__color_u32_argb_premul  //
-wuffs_base__pixel_buffer__color_u32_at(const wuffs_base__pixel_buffer* pb,
-                                       uint32_t x,
-                                       uint32_t y);
+wuffs_base__pixel_buffer__color_u32_argb_premul_at(
+    const wuffs_base__pixel_buffer* pb,
+    uint32_t x,
+    uint32_t y);
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
     wuffs_base__color_u32_argb_premul color);
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_fill_rect(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
     wuffs_base__pixel_buffer* pb,
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color);
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
@@ -6147,7 +6173,13 @@ wuffs_base__pixel_buffer::plane(uint32_t p) {
 
 inline wuffs_base__color_u32_argb_premul  //
 wuffs_base__pixel_buffer::color_u32_at(uint32_t x, uint32_t y) const {
-  return wuffs_base__pixel_buffer__color_u32_at(this, x, y);
+  return wuffs_base__pixel_buffer__color_u32_argb_premul_at(this, x, y);
+}
+
+inline wuffs_base__color_u32_argb_premul  //
+wuffs_base__pixel_buffer::color_u32_argb_premul_at(uint32_t x,
+                                                   uint32_t y) const {
+  return wuffs_base__pixel_buffer__color_u32_argb_premul_at(this, x, y);
 }
 
 inline wuffs_base__status  //
@@ -6155,23 +6187,42 @@ wuffs_base__pixel_buffer::set_color_u32_at(
     uint32_t x,
     uint32_t y,
     wuffs_base__color_u32_argb_premul color) {
-  return wuffs_base__pixel_buffer__set_color_u32_at(this, x, y, color);
+  return wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(this, x, y,
+                                                                color);
+}
+
+inline wuffs_base__status  //
+wuffs_base__pixel_buffer::set_color_u32_argb_premul_at(
+    uint32_t x,
+    uint32_t y,
+    wuffs_base__color_u32_argb_premul color) {
+  return wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(this, x, y,
+                                                                color);
 }
 
 inline wuffs_base__status  //
 wuffs_base__pixel_buffer::set_color_u32_fill_rect(
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color) {
-  return wuffs_base__pixel_buffer__set_color_u32_fill_rect(this, rect, color);
+  return wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
+      this, rect, color);
 }
 
 inline wuffs_base__status  //
-wuffs_base__pixel_buffer::set_color_u32_nonpremul_at(
+wuffs_base__pixel_buffer::set_color_u32_argb_premul_fill_rect(
+    wuffs_base__rect_ie_u32 rect,
+    wuffs_base__color_u32_argb_premul color) {
+  return wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
+      this, rect, color);
+}
+
+inline wuffs_base__status  //
+wuffs_base__pixel_buffer::set_color_u32_argb_nonpremul_at(
     uint32_t x,
     uint32_t y,
     wuffs_base__color_u32_argb_nonpremul color) {
-  return wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(this, x, y,
-                                                              color);
+  return wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(this, x, y,
+                                                                   color);
 }
 
 inline bool  //
@@ -24528,7 +24579,7 @@ wuffs_base__pixel_buffer__color_u32_at(const wuffs_base__pixel_buffer* pb,
 // --------
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
@@ -24642,7 +24693,7 @@ wuffs_base__pixel_buffer__set_color_u32_at(
 }
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(
+wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(
     wuffs_base__pixel_buffer* pb,
     uint32_t x,
     uint32_t y,
@@ -25127,7 +25178,7 @@ wuffs_private_impl__pixel_buffer__set_color_u32_fill_rect__xxxxxxxx(
 }
 
 WUFFS_BASE__MAYBE_STATIC wuffs_base__status  //
-wuffs_base__pixel_buffer__set_color_u32_fill_rect(
+wuffs_base__pixel_buffer__set_color_u32_argb_premul_fill_rect(
     wuffs_base__pixel_buffer* pb,
     wuffs_base__rect_ie_u32 rect,
     wuffs_base__color_u32_argb_premul color) {
@@ -25199,7 +25250,7 @@ wuffs_base__pixel_buffer__set_color_u32_fill_rect(
   for (y = rect.min_incl_y; y < rect.max_excl_y; y++) {
     uint32_t x;
     for (x = rect.min_incl_x; x < rect.max_excl_x; x++) {
-      wuffs_base__pixel_buffer__set_color_u32_at(pb, x, y, color);
+      wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(pb, x, y, color);
     }
   }
   return wuffs_base__make_status(NULL);
@@ -32918,7 +32969,7 @@ wuffs_private_impl__swizzle_ycca_bt601sr_src__convert_4_general(
             *up0++, *up1++, *up2++);
     color &= 0xFFFFFFu;
     color |= ((uint32_t)(*up3++)) << 24;
-    wuffs_base__pixel_buffer__set_color_u32_nonpremul_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_nonpremul_at(dst, x, y, color);
   }
 }
 
@@ -32964,7 +33015,7 @@ wuffs_private_impl__swizzle_cmyk__convert_4_general(
     r = ((r * w) + 0x7Fu) / 0xFFu;
     g = ((g * w) + 0x7Fu) / 0xFFu;
     b = ((b * w) + 0x7Fu) / 0xFFu;
-    wuffs_base__pixel_buffer__set_color_u32_at(
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
         dst, x, y, 0xFF000000u | (r << 16u) | (g << 8u) | (b << 0u));
   }
 }
@@ -32991,7 +33042,7 @@ wuffs_private_impl__swizzle_ycck__convert_4_general(
     r = ((r * w) + 0x7Fu) / 0xFFu;
     g = ((g * w) + 0x7Fu) / 0xFFu;
     b = ((b * w) + 0x7Fu) / 0xFFu;
-    wuffs_base__pixel_buffer__set_color_u32_at(
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(
         dst, x, y, 0xFF000000u | (r << 16u) | (g << 8u) | (b << 0u));
   }
 }
@@ -33021,7 +33072,7 @@ wuffs_private_impl__swizzle_rgb__convert_3_general(
                      (((uint32_t)(*up0++)) << 16u) |  //
                      (((uint32_t)(*up1++)) << 8u) |   //
                      (((uint32_t)(*up2++)) << 0u);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -33038,7 +33089,7 @@ wuffs_private_impl__swizzle_ycc_bt601fr__convert_3_general(
     uint32_t color =                                   //
         wuffs_base__color_ycc_bt601fr__as__color_u32(  //
             *up0++, *up1++, *up2++);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -33099,7 +33150,7 @@ wuffs_private_impl__swizzle_ycc_bt601sr__convert_3_general(
     uint32_t color =                                   //
         wuffs_base__color_ycc_bt601sr__as__color_u32(  //
             *up0++, *up1++, *up2++);
-    wuffs_base__pixel_buffer__set_color_u32_at(dst, x, y, color);
+    wuffs_base__pixel_buffer__set_color_u32_argb_premul_at(dst, x, y, color);
   }
 }
 
@@ -34305,7 +34356,7 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
   }
 
   if (wuffs_base__pixel_format__is_planar(&dst->pixcfg.private_impl.pixfmt)) {
-    // TODO: see wuffs_base__pixel_buffer__set_color_u32_at's TODO.
+    // TODO: see wuffs_base__pixel_buffer__set_color_u32_argb_premul_at's TODO.
     return wuffs_base__make_status(
         wuffs_base__error__unsupported_pixel_swizzler_option);
   }
@@ -34380,7 +34431,8 @@ wuffs_base__pixel_swizzler__swizzle_ycck(
       break;
 
     default:
-      // TODO: see wuffs_base__pixel_buffer__set_color_u32_at's TODO.
+      // TODO: see wuffs_base__pixel_buffer__set_color_u32_argb_premul_at's
+      // TODO.
       return wuffs_base__make_status(
           wuffs_base__error__unsupported_pixel_swizzler_option);
   }
@@ -97009,8 +97061,9 @@ redirect:
   }
   wuffs_base__pixel_buffer pixel_buffer = alloc_pixbuf_result.pixbuf;
   if (valid_background_color) {
-    wuffs_base__status pb_scufr_status = pixel_buffer.set_color_u32_fill_rect(
-        pixel_buffer.pixcfg.bounds(), background_color);
+    wuffs_base__status pb_scufr_status =
+        pixel_buffer.set_color_u32_argb_premul_fill_rect(
+            pixel_buffer.pixcfg.bounds(), background_color);
     if (pb_scufr_status.repr != nullptr) {
       return DecodeImageResult(pb_scufr_status.message());
     }
