@@ -162,6 +162,8 @@ class DecodeImageCallbacks {
   // should be at least len_range.min_incl, but larger allocations (up to
   // len_range.max_incl) may have better performance (by using more memory).
   //
+  // The len_range argument will satisfy !len_range.is_empty().
+  //
   // The default AllocWorkbuf implementation allocates len_range.max_incl bytes
   // of either uninitialized or zeroed memory.
   virtual AllocWorkbufResult  //

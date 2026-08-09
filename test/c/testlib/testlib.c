@@ -1241,7 +1241,7 @@ do_test__wuffs_base__image_decoder(
   wuffs_base__range_ii_u64 workbuf_len =
       wuffs_base__image_decoder__workbuf_len(b);
   if (workbuf_len.min_incl > workbuf_len.max_incl) {
-    return "inconsistent workbuf_len";
+    return "indeterminate workbuf_len";
   }
   if (workbuf_len.max_incl > workbuf.len) {
     return "workbuf_len is too large";
@@ -1308,7 +1308,7 @@ do_test__wuffs_base__io_transformer(wuffs_base__io_transformer* b,
   wuffs_base__range_ii_u64 workbuf_len =
       wuffs_base__io_transformer__workbuf_len(b);
   if (workbuf_len.min_incl > workbuf_len.max_incl) {
-    return "inconsistent workbuf_len";
+    return "indeterminate workbuf_len";
   }
   if (workbuf_len.max_incl > IO_BUFFER_ARRAY_SIZE) {
     return "workbuf_len is too large";

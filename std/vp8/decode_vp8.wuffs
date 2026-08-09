@@ -543,6 +543,12 @@ pub func decoder.workbuf_len() base.range_ii_u64 {
     var wh     : base.u64[..= 0xFFF_8001]
     var wb_len : base.u64[..= DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE - 0xFFF_8001]
 
+    if this.quirk_source_length == 0 {
+        // (min_incl > max_incl) means an empty range_ii_u64. The workbuf
+        // length isn't known yet, as we don't know partitioned_data_length.
+        return this.util.make_range_ii_u64(min_incl: 1, max_incl: 0)
+    }
+
     if this.quirk_has_alpha_side_channel {
         wh = (this.width * this.height) as base.u64
     }

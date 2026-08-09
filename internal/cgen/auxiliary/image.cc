@@ -518,6 +518,9 @@ redirect:
   // Allocate the work buffer. Wuffs' decoders conventionally assume that this
   // can be uninitialized memory.
   wuffs_base__range_ii_u64 workbuf_len = image_decoder->workbuf_len();
+  if (workbuf_len.is_empty()) {
+    return DecodeImageResult(DecodeImage_UnsupportedImageFormat);
+  }
   DecodeImageCallbacks::AllocWorkbufResult alloc_workbuf_result =
       callbacks.AllocWorkbuf(workbuf_len, true);
   if (!alloc_workbuf_result.error_message.empty()) {

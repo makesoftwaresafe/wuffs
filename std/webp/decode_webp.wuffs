@@ -22,7 +22,6 @@ pub status "#bad header"
 pub status "#bad transform"
 pub status "#short chunk"
 pub status "#truncated input"
-pub status "#unsupported VP8X/VP8 chunk length"
 pub status "#unsupported WebP file"
 pub status "#unsupported number of Huffman groups"
 
@@ -33,63 +32,6 @@ pri status "#internal error: inconsistent n_bits"
 // TODO: reference vp8.DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE, although the
 // worst case for VP8L is bigger than for VP8.
 pub const DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE : base.u64 = 0x4C00_0000
-
-// The default value of the largest supported VP8-inside-VP8X chunk length.
-// This limitation is a consequence of combining Wuffs' "decode an image" API
-// with WebP/VP8X/VP8's file format design.
-//
-// Wuffs' API only assumes sequential I/O access, not random I/O access, to the
-// encoded image's bytes. It also is incapable (in the security capability
-// sense) of dynamically allocating memory, so any O(width × height) pixel
-// buffers, or any other buffers that aren't O(1) in terms of width and height,
-// must be allocated by the caller, not the callee (Wuffs code).
-//
-// "How much dynamic memory does the caller need to allocate?" is answered by
-// the decoder.workbuf_len method, which is valid to call as soon as
-// decoder.decode_image_config returns (and decode_image_config, unlike
-// decode_frame, does not take a variable-length slice-of-bytes workbuf
-// argument). workbuf_len must return a worst case estimate, as it has only one
-// shot at answering "how much dynamic memory?"
-//
-// On the other hand, an VP8 image file can have multiple "partitions", which
-// means that a VP8 decoder must support random I/O access. Wuffs supports this
-// by, in the worst case, copying the VP8's chunk payload (the encoded image
-// data) into the workbuf. (Copying into a contiguous buffer is the same as
-// what the libwebp C library's WebPIAppend "incremental API" does.) But doing
-// so requires knowing how large the VP8 chunk is, so that the caller can
-// allocate a sufficiently large workbuf.
-//
-// We cannot answer that question precisely until we parse the VP8 chunk, but
-// in the WebP/VP8X file format, the VP8 chunk must occur after any ALPH chunk.
-// For Wuffs to parse an ALPH chunk, it must have already "allocated" enough
-// memory, more than O(1), by answering "how much dynamic memory?"
-//
-// As we cannot answer that question precisely (whilst still satisfying Wuffs'
-// "decode an image" API, which works across numerous image file formats, not
-// just WebP), we use a made-up upper bound, which is this number.
-//
-// Its value is arbitrary, but there is a trade-off. The larger it is, the more
-// workbuf memory Wuffs will say it needs (and callers will allocate), even if
-// it later discovers that it over-budgeted. The smaller it is, Wuffs will
-// reject (as unsupported) more large-but-valid WebP/VP8X/VP8 files.
-//
-// This default value is 8 MiB.
-pub const VP8X_MAX_INCL_VP8_CHUNK_LENGTH_DEFAULT : base.u64 = 8_388608
-
-// TODO: in the future, regarding VP8X_MAX_INCL_VP8_CHUNK_LENGTH_DEFAULT, we
-// could make this set by a quirk instead of hard-coded.
-//
-// Or, we could change the semantics of the wuffs_base__image_decoder API
-// (which applies to multiple image formats, not just WebP). The API is that
-// you can call workbuf_len as soon as decode_image_config returns. workbuf_len
-// returns a range and any value within that range should be a valid length for
-// the "dynamically allocated, not O(1) in terms of width and height" workbuf
-// memory passed to decode_frame.
-//
-// We could relax this so that decode_frame could return a "$short workbuf"
-// suspension, if the workbuf length is unknown at the time of the first
-// decode_frame call, and the caller is expected to essentially realloc the
-// workbuf, keeping any existing contents when growing it.
 
 pub struct decoder? implements base.image_decoder(
         width  : base.u32[..= 0x4000],
@@ -143,6 +85,7 @@ pub struct decoder? implements base.image_decoder(
         frame_config_io_position : base.u64,
 
         riff_chunk_length : base.u32,
+        rcl_remaining     : base.u32,
         sub_chunk_length  : base.u32,
         sub_chunk_type    : base.u32,
 
@@ -275,12 +218,13 @@ pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.
     if (this.riff_chunk_length & 1) <> 0 {
         return "#bad header"
     }
+    this.rcl_remaining = this.riff_chunk_length
 
     while true {
-        io_limit (io: args.src, limit: this.riff_chunk_length as base.u64) {
+        io_limit (io: args.src, limit: this.rcl_remaining as base.u64) {
             r_mark = args.src.mark()
             status =? this.do_decode_image_config_limited?(dst: args.dst, src: args.src)
-            this.riff_chunk_length ~sat-=
+            this.rcl_remaining ~sat-=
                     (args.src.count_since(mark: r_mark) & 0xFFFF_FFFF) as base.u32
         }
 
@@ -288,7 +232,7 @@ pri func decoder.do_decode_image_config?(dst: nptr base.image_config, src: base.
             break
         } else if not status.is_suspension() {
             return status
-        } else if (status == base."$short read") and (this.riff_chunk_length == 0) {
+        } else if (status == base."$short read") and (this.rcl_remaining == 0) {
             return "#short chunk"
         }
         yield? status
@@ -341,10 +285,6 @@ pri func decoder.do_decode_image_config_limited?(dst: nptr base.image_config, sr
         // No-op.
     } else if this.sub_chunk_length <> 10 {
         return "#bad header"
-    } else {
-        this.vp8.set_quirk!(
-                key: base.QUIRK_SOURCE_LENGTH,
-                value: (VP8X_MAX_INCL_VP8_CHUNK_LENGTH_DEFAULT << 1) | 1)
     }
 
     while true {
@@ -446,6 +386,31 @@ pri func decoder.do_decode_image_config_limited_vp8x?(src: base.io_reader) {
     this.workbuf_offset_for_transform[1] = (4 * this.width * this.height) + (1 * transform_size)
     this.workbuf_offset_for_transform[2] = (4 * this.width * this.height) + (2 * transform_size)
     this.workbuf_offset_for_transform[3] = (4 * this.width * this.height) + (3 * transform_size)
+
+    // The RIFF chunk length (which we have seen) is an upper bound for the VP8
+    // sub-chunk length (which we haven't seen yet). Set this now so that
+    // this.vp8.workbuf_len will return something definitive (non-empty).
+    //
+    // TODO: for animated WebP images, this upper bound essentially allocates
+    // O(numberOfAnimationFrames) memory. Ideally, it'd be O(1) instead.
+    //
+    // This might need tweaking the semantics of the wuffs_base__image_decoder
+    // API (which applies to multiple image formats, not just WebP). The API is
+    // that you can call workbuf_len as soon as decode_image_config returns.
+    // workbuf_len returns a range and any value within that range should be a
+    // valid length for the "dynamically allocated, not O(1) in terms of width
+    // and height" workbuf memory passed to decode_frame.
+    //
+    // We could relax this so that decode_frame could return a "$short workbuf"
+    // suspension, if the workbuf length is unknown at the time of the first
+    // decode_frame call, and the caller is expected to essentially realloc the
+    // workbuf, keeping any existing contents when growing it.
+    status = this.vp8.set_quirk!(
+            key: base.QUIRK_SOURCE_LENGTH,
+            value: ((this.riff_chunk_length as base.u64) << 1) | 1)
+    if not status.is_ok() {
+        return "#unsupported WebP file"
+    }
 
     status = this.vp8.set_quirk!(
             key: vp8.QUIRK_WIDTH_AND_HEIGHT,
@@ -574,9 +539,6 @@ pri func decoder.do_decode_frame?(dst: ptr base.pixel_buffer, src: base.io_reade
                     value: 1)
 
         } else if this.sub_chunk_type == 'VP8 'le {
-            if (this.sub_chunk_length as base.u64) > VP8X_MAX_INCL_VP8_CHUNK_LENGTH_DEFAULT {
-                return "#unsupported VP8X/VP8 chunk length"
-            }
             this.vp8.set_quirk!(
                     key: base.QUIRK_SOURCE_LENGTH,
                     value: ((this.sub_chunk_length as base.u64) << 1) | 1)
@@ -704,6 +666,11 @@ pub func decoder.workbuf_len() base.range_ii_u64 {
 
     if this.variant <> 0x02 {
         s = this.vp8.workbuf_len()
+        if s.is_empty() {
+            // Empty means that the workbuf_len range isn't known yet.
+            return s
+        }
+
         r = this.util.make_range_ii_u64(
                 min_incl: s.get_min_incl().max(no_less_than: r.get_min_incl()),
                 max_incl: s.get_max_incl().max(no_less_than: r.get_max_incl()))

@@ -312,7 +312,11 @@ try_allocate(wuffs_gif__decoder* dec) {
     return "could not allocate prev-dst buffer";
   }
 
-  uint64_t workbuf_len_max_incl = wuffs_gif__decoder__workbuf_len(dec).max_incl;
+  wuffs_base__range_ii_u64 r = wuffs_gif__decoder__workbuf_len(dec);
+  if (wuffs_base__range_ii_u64__is_empty(&r)) {
+    return "indeterminate work buffer length";
+  }
+  uint64_t workbuf_len_max_incl = r.max_incl;
   if (workbuf_len_max_incl > 0) {
     g_workbuf = wuffs_base__malloc_slice_u8(malloc, workbuf_len_max_incl);
     if (!g_workbuf.ptr) {

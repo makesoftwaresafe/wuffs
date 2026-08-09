@@ -609,8 +609,12 @@ redirect:
       WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, w, h);
 
   // Configure the work buffer.
-  uint64_t workbuf_len =
-      wuffs_base__image_decoder__workbuf_len(g_image_decoder).max_incl;
+  wuffs_base__range_ii_u64 r =
+      wuffs_base__image_decoder__workbuf_len(g_image_decoder);
+  if (wuffs_base__range_ii_u64__is_empty(&r)) {
+    return "main: unsupported image (indeterminate work buffer length)";
+  }
+  uint64_t workbuf_len = r.max_incl;
   if (g_workbuf_slice.len < workbuf_len) {
     return "main: image is too large (to configure work buffer)";
   }

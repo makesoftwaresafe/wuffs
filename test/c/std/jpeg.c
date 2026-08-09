@@ -126,7 +126,11 @@ test_wuffs_jpeg_decode_lower_quality() {
           &dec, WUFFS_BASE__QUIRK_QUALITY,
           WUFFS_BASE__QUIRK_QUALITY__VALUE__LOWER_QUALITY);
     }
-    uint64_t m = wuffs_jpeg__decoder__workbuf_len(&dec).min_incl;
+    wuffs_base__range_ii_u64 r = wuffs_jpeg__decoder__workbuf_len(&dec);
+    if (wuffs_base__range_ii_u64__is_empty(&r)) {
+      RETURN_FAIL("q=%d: indeterminate workbuf length", q);
+    }
+    uint64_t m = r.min_incl;
     if ((q == 0) && (m == 0)) {
       RETURN_FAIL("q=%d: have %" PRIu64 ", want non-zero", q, m);
     } else if ((q != 0) && (m != 0)) {

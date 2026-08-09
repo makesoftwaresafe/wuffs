@@ -230,7 +230,12 @@ wuffs_drop_in__stb__load1(           //
   }
 
   uint64_t pixbuf_len = (uint64_t)w * (uint64_t)h * (uint64_t)desired_channels;
-  uint64_t workbuf_len = wuffs_base__image_decoder__workbuf_len(dec).max_incl;
+  wuffs_base__range_ii_u64 r = wuffs_base__image_decoder__workbuf_len(dec);
+  if (wuffs_base__range_ii_u64__is_empty(&r)) {
+    wuffs_drop_in__stb__g_failure_reason = "indeterminate workbuf length";
+    return NULL;
+  }
+  uint64_t workbuf_len = r.max_incl;
 #if SIZE_MAX < 0xFFFFFFFFFFFFFFFFull
   if ((pixbuf_len > ((uint64_t)SIZE_MAX)) ||
       (workbuf_len > ((uint64_t)SIZE_MAX))) {

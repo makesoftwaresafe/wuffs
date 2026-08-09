@@ -16347,15 +16347,12 @@ extern const char wuffs_webp__error__bad_header[];
 extern const char wuffs_webp__error__bad_transform[];
 extern const char wuffs_webp__error__short_chunk[];
 extern const char wuffs_webp__error__truncated_input[];
-extern const char wuffs_webp__error__unsupported_vp8x_vp8_chunk_length[];
 extern const char wuffs_webp__error__unsupported_webp_file[];
 extern const char wuffs_webp__error__unsupported_number_of_huffman_groups[];
 
 // ---------------- Public Consts
 
 #define WUFFS_WEBP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE 1275068416u
-
-#define WUFFS_WEBP__VP8X_MAX_INCL_VP8_CHUNK_LENGTH_DEFAULT 8388608u
 
 // ---------------- Struct Declarations
 
@@ -16530,6 +16527,7 @@ struct wuffs_webp__decoder__struct {
     uint8_t f_vp8x_alph_flags;
     uint64_t f_frame_config_io_position;
     uint32_t f_riff_chunk_length;
+    uint32_t f_rcl_remaining;
     uint32_t f_sub_chunk_length;
     uint32_t f_sub_chunk_type;
     uint32_t f_bits;
@@ -17945,6 +17943,8 @@ class DecodeImageCallbacks {
   // AllocWorkbuf allocates the work buffer. The allocated buffer's length
   // should be at least len_range.min_incl, but larger allocations (up to
   // len_range.max_incl) may have better performance (by using more memory).
+  //
+  // The len_range argument will satisfy !len_range.is_empty().
   //
   // The default AllocWorkbuf implementation allocates len_range.max_incl bytes
   // of either uninitialized or zeroed memory.
@@ -86742,6 +86742,9 @@ wuffs_vp8__decoder__workbuf_len(
   uint64_t v_wh = 0;
   uint64_t v_wb_len = 0;
 
+  if (self->private_impl.f_quirk_source_length == 0u) {
+    return wuffs_base__utility__make_range_ii_u64(1u, 0u);
+  }
   if (self->private_impl.f_quirk_has_alpha_side_channel) {
     v_wh = ((uint64_t)((self->private_impl.f_width * self->private_impl.f_height)));
   }
@@ -87689,7 +87692,6 @@ const char wuffs_webp__error__bad_header[] = "#webp: bad header";
 const char wuffs_webp__error__bad_transform[] = "#webp: bad transform";
 const char wuffs_webp__error__short_chunk[] = "#webp: short chunk";
 const char wuffs_webp__error__truncated_input[] = "#webp: truncated input";
-const char wuffs_webp__error__unsupported_vp8x_vp8_chunk_length[] = "#webp: unsupported VP8X/VP8 chunk length";
 const char wuffs_webp__error__unsupported_webp_file[] = "#webp: unsupported WebP file";
 const char wuffs_webp__error__unsupported_number_of_huffman_groups[] = "#webp: unsupported number of Huffman groups";
 const char wuffs_webp__error__internal_error_inconsistent_huffman_code[] = "#webp: internal error: inconsistent Huffman code";
@@ -91285,12 +91287,13 @@ wuffs_webp__decoder__do_decode_image_config(
       status = wuffs_base__make_status(wuffs_webp__error__bad_header);
       goto exit;
     }
+    self->private_impl.f_rcl_remaining = self->private_impl.f_riff_chunk_length;
     while (true) {
       {
         const bool o_0_closed_a_src = a_src->meta.closed;
         const uint8_t* o_0_io2_a_src = io2_a_src;
         wuffs_private_impl__io_reader__limit(&io2_a_src, iop_a_src,
-            ((uint64_t)(self->private_impl.f_riff_chunk_length)));
+            ((uint64_t)(self->private_impl.f_rcl_remaining)));
         if (a_src) {
           size_t n = ((size_t)(io2_a_src - a_src->data.ptr));
           a_src->meta.closed = a_src->meta.closed && (a_src->meta.wi <= n);
@@ -91307,7 +91310,7 @@ wuffs_webp__decoder__do_decode_image_config(
             iop_a_src = a_src->data.ptr + a_src->meta.ri;
           }
         }
-        wuffs_private_impl__u32__sat_sub_indirect(&self->private_impl.f_riff_chunk_length, ((uint32_t)(wuffs_private_impl__io__count_since(v_r_mark, ((uint64_t)(iop_a_src - io0_a_src))))));
+        wuffs_private_impl__u32__sat_sub_indirect(&self->private_impl.f_rcl_remaining, ((uint32_t)(wuffs_private_impl__io__count_since(v_r_mark, ((uint64_t)(iop_a_src - io0_a_src))))));
         io2_a_src = o_0_io2_a_src;
         if (a_src) {
           a_src->meta.closed = o_0_closed_a_src;
@@ -91325,7 +91328,7 @@ wuffs_webp__decoder__do_decode_image_config(
           goto exit;
         }
         goto ok;
-      } else if ((v_status.repr == wuffs_base__suspension__short_read) && (self->private_impl.f_riff_chunk_length == 0u)) {
+      } else if ((v_status.repr == wuffs_base__suspension__short_read) && (self->private_impl.f_rcl_remaining == 0u)) {
         status = wuffs_base__make_status(wuffs_webp__error__short_chunk);
         goto exit;
       }
@@ -91500,8 +91503,6 @@ wuffs_webp__decoder__do_decode_image_config_limited(
     } else if (self->private_impl.f_sub_chunk_length != 10u) {
       status = wuffs_base__make_status(wuffs_webp__error__bad_header);
       goto exit;
-    } else {
-      wuffs_vp8__decoder__set_quirk(&self->private_data.f_vp8, 3u, 16777217u);
     }
     while (true) {
       {
@@ -91831,6 +91832,11 @@ wuffs_webp__decoder__do_decode_image_config_limited_vp8x(
     self->private_impl.f_workbuf_offset_for_transform[1u] = ((4u * self->private_impl.f_width * self->private_impl.f_height) + v_transform_size);
     self->private_impl.f_workbuf_offset_for_transform[2u] = ((4u * self->private_impl.f_width * self->private_impl.f_height) + (2u * v_transform_size));
     self->private_impl.f_workbuf_offset_for_transform[3u] = ((4u * self->private_impl.f_width * self->private_impl.f_height) + (3u * v_transform_size));
+    v_status = wuffs_vp8__decoder__set_quirk(&self->private_data.f_vp8, 3u, ((((uint64_t)(self->private_impl.f_riff_chunk_length)) << 1u) | 1u));
+    if ( ! wuffs_base__status__is_ok(&v_status)) {
+      status = wuffs_base__make_status(wuffs_webp__error__unsupported_webp_file);
+      goto exit;
+    }
     v_status = wuffs_vp8__decoder__set_quirk(&self->private_data.f_vp8, 1836840961u, (((uint64_t)(self->private_impl.f_width)) | (((uint64_t)(self->private_impl.f_height)) << 32u)));
     if ( ! wuffs_base__status__is_ok(&v_status)) {
       status = wuffs_base__make_status(wuffs_webp__error__unsupported_webp_file);
@@ -92251,10 +92257,6 @@ wuffs_webp__decoder__do_decode_frame(
         }
         wuffs_vp8__decoder__set_quirk(&self->private_data.f_vp8, 1836840960u, 1u);
       } else if (self->private_impl.f_sub_chunk_type == 540561494u) {
-        if (((uint64_t)(self->private_impl.f_sub_chunk_length)) > 8388608u) {
-          status = wuffs_base__make_status(wuffs_webp__error__unsupported_vp8x_vp8_chunk_length);
-          goto exit;
-        }
         wuffs_vp8__decoder__set_quirk(&self->private_data.f_vp8, 3u, ((((uint64_t)(self->private_impl.f_sub_chunk_length)) << 1u) | 1u));
         self->private_impl.f_variant = 129u;
         break;
@@ -92581,6 +92583,9 @@ wuffs_webp__decoder__workbuf_len(
   v_r = wuffs_base__utility__make_range_ii_u64(((uint64_t)(self->private_impl.f_workbuf_offset_for_transform[3u])), ((uint64_t)(self->private_impl.f_workbuf_offset_for_transform[3u])));
   if (self->private_impl.f_variant != 2u) {
     v_s = wuffs_vp8__decoder__workbuf_len(&self->private_data.f_vp8);
+    if (wuffs_base__range_ii_u64__is_empty(&v_s)) {
+      return v_s;
+    }
     v_r = wuffs_base__utility__make_range_ii_u64(wuffs_base__u64__max(wuffs_private_impl__range_ii_u64__get_min_incl(&v_s), wuffs_private_impl__range_ii_u64__get_min_incl(&v_r)), wuffs_base__u64__max(wuffs_private_impl__range_ii_u64__get_max_incl(&v_s), wuffs_private_impl__range_ii_u64__get_max_incl(&v_r)));
   }
   return v_r;
@@ -97149,6 +97154,9 @@ redirect:
   // Allocate the work buffer. Wuffs' decoders conventionally assume that this
   // can be uninitialized memory.
   wuffs_base__range_ii_u64 workbuf_len = image_decoder->workbuf_len();
+  if (workbuf_len.is_empty()) {
+    return DecodeImageResult(DecodeImage_UnsupportedImageFormat);
+  }
   DecodeImageCallbacks::AllocWorkbufResult alloc_workbuf_result =
       callbacks.AllocWorkbuf(workbuf_len, true);
   if (!alloc_workbuf_result.error_message.empty()) {
@@ -98089,7 +98097,12 @@ wuffs_drop_in__stb__load1(           //
   }
 
   uint64_t pixbuf_len = (uint64_t)w * (uint64_t)h * (uint64_t)desired_channels;
-  uint64_t workbuf_len = wuffs_base__image_decoder__workbuf_len(dec).max_incl;
+  wuffs_base__range_ii_u64 r = wuffs_base__image_decoder__workbuf_len(dec);
+  if (wuffs_base__range_ii_u64__is_empty(&r)) {
+    wuffs_drop_in__stb__g_failure_reason = "indeterminate workbuf length";
+    return NULL;
+  }
+  uint64_t workbuf_len = r.max_incl;
 #if SIZE_MAX < 0xFFFFFFFFFFFFFFFFull
   if ((pixbuf_len > ((uint64_t)SIZE_MAX)) ||
       (workbuf_len > ((uint64_t)SIZE_MAX))) {
