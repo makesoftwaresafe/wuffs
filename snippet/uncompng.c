@@ -94,12 +94,12 @@ uncompng__encode(int (*write_func)(void* context,
                                    const uint8_t* data_ptr,
                                    size_t data_len),
                  void* context,
-                 const uint8_t* pixel_ptr,
-                 size_t pixel_len,
+                 uint32_t pixel_format,
                  uint32_t width,
                  uint32_t height,
-                 size_t stride,
-                 uint32_t pixel_format);
+                 const uint8_t* pixel_ptr,
+                 size_t pixel_len,
+                 size_t stride);
 
 // --------
 
@@ -581,12 +581,12 @@ uncompng__encode(int (*write_func)(void* context,
                                    const uint8_t* data_ptr,
                                    size_t data_len),
                  void* context,
-                 const uint8_t* pixel_ptr,
-                 size_t pixel_len,
+                 uint32_t pixel_format,
                  uint32_t width,
                  uint32_t height,
-                 size_t stride,
-                 uint32_t pixel_format) {
+                 const uint8_t* pixel_ptr,
+                 size_t pixel_len,
+                 size_t stride) {
   if (!write_func) {
     return UNCOMPNG__RESULT__INVALID_ARGUMENT;
   }

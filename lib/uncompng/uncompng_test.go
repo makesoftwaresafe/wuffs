@@ -26,39 +26,39 @@ func encodeImage(w io.Writer, src image.Image) error {
 
 	switch src := src.(type) {
 	case *image.Gray:
-		return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth8, ColorTypeGray)
+		return e.Encode(w, Depth8, ColorTypeGray, b.Dx(), b.Dy(), src.Pix, src.Stride)
 
 	case *image.Gray16:
-		return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth16, ColorTypeGray)
+		return e.Encode(w, Depth16, ColorTypeGray, b.Dx(), b.Dy(), src.Pix, src.Stride)
 
 	case *image.RGBA:
 		if src.Opaque() {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth8, ColorTypeRGBX)
+			return e.Encode(w, Depth8, ColorTypeRGBX, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		}
 
 	case *image.RGBA64:
 		if src.Opaque() {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth16, ColorTypeRGBX)
+			return e.Encode(w, Depth16, ColorTypeRGBX, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		}
 
 	case *image.NRGBA:
 		if src.Opaque() {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth8, ColorTypeRGBX)
+			return e.Encode(w, Depth8, ColorTypeRGBX, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		} else {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth8, ColorTypeNRGBA)
+			return e.Encode(w, Depth8, ColorTypeNRGBA, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		}
 
 	case *image.NRGBA64:
 		if src.Opaque() {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth16, ColorTypeRGBX)
+			return e.Encode(w, Depth16, ColorTypeRGBX, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		} else {
-			return e.Encode(w, src.Pix, b.Dx(), b.Dy(), src.Stride, Depth16, ColorTypeNRGBA)
+			return e.Encode(w, Depth16, ColorTypeNRGBA, b.Dx(), b.Dy(), src.Pix, src.Stride)
 		}
 	}
 
 	tmp := image.NewNRGBA(b)
 	draw.Draw(tmp, b, src, b.Min, draw.Src)
-	return e.Encode(w, tmp.Pix, b.Dx(), b.Dy(), tmp.Stride, Depth8, ColorTypeNRGBA)
+	return e.Encode(w, Depth8, ColorTypeNRGBA, b.Dx(), b.Dy(), tmp.Pix, tmp.Stride)
 }
 
 func getPix(m image.Image) []byte {
@@ -144,7 +144,7 @@ func TestNoAllocation(tt *testing.T) {
 	enc := Encoder{}
 	pix := make([]byte, 4*3*5)
 	got := testing.AllocsPerRun(100, func() {
-		enc.Encode(io.Discard, pix, 3, 5, 4*3, Depth8, ColorTypeNRGBA)
+		enc.Encode(io.Discard, Depth8, ColorTypeNRGBA, 3, 5, pix, 4*3)
 	})
 	if got != 0 {
 		tt.Errorf("AllocsPerRun: got %v, want 0", got)

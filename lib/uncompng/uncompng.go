@@ -196,7 +196,7 @@ const (
 // pix holds the pixel data, either 1 or 4 bytes per pixel (doubled for
 // Depth16) depending on the colorType. width and height are measured in
 // pixels. stride is measured in bytes. depth must be either Depth8 or Depth16.
-func (e *Encoder) Encode(w io.Writer, pix []byte, width int, height int, stride int, depth Depth, colorType ColorType) error {
+func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width int, height int, pix []byte, stride int) error {
 	if (width < 0) || (height < 0) ||
 		((depth != Depth8) && (depth != Depth16)) ||
 		(colorType.pngFileFormatEncoding() == 0xFF) {

@@ -804,10 +804,10 @@ print_uncompressed_png_frame() {
   uint32_t h = wuffs_base__pixel_config__height(&g_pixbuf.pixcfg);
   wuffs_base__table_u8 tab = wuffs_base__pixel_buffer__plane(&g_pixbuf, 0);
   return UNCOMPNG__RESULT__OK ==
-         uncompng__encode(&my_uncompng_write_func, NULL, tab.ptr,
+         uncompng__encode(&my_uncompng_write_func, NULL, pixfmt, w, h, tab.ptr,
                           wuffs_base__table__flattened_length(
                               tab.width, tab.height, tab.stride),
-                          w, h, tab.stride, pixfmt);
+                          tab.stride);
 }
 
 void  //
