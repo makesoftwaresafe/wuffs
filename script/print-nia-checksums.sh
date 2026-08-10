@@ -47,8 +47,7 @@ fi
 # ----
 
 handle() {
-  #local c=$(gen/bin/example-convert-to-nia --output-crc32-digest <$1 2>/dev/null)
-  local c=$(gen/bin/example-convert-to-nia --output-crc32-digest <$1)
+  local c=$(gen/bin/example-convert-to-nia --output-crc32-digest <$1 2>/dev/null)
   if [ "$c" != "BAD 00000000" ]; then
     echo $c $1
   fi
