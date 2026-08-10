@@ -53,36 +53,56 @@ func main1() error {
 	if int64(len(src)-8) < chunkLen {
 		return posError(0, len(src))
 	}
-	fmt.Printf("pos = 0x%08X = %10d (+8)    len = 0x%08X = %10d    RIFF/%s\n",
-		0, 0, chunkLen, chunkLen, clean(src[8:12]))
-	pos = 12
+	isWEBP = string(src[8:12]) == "WEBP"
+	fmt.Printf("pos: 0x%08X %10d +8, len: 0x%08X %10d, dep: %d, %s\n",
+		0, 0, chunkLen, chunkLen, 0, clean(src[8:12]))
 
+	pos, err = do(src, 1, 12)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("pos: 0x%08X %10d                                         ~~~~\n",
+		pos, pos)
+	return nil
+}
+
+func do(src []byte, depth int, pos int) (int, error) {
 	for pos < len(src) {
 		if pos > (len(src) - 8) {
-			return posError(pos, len(src))
+			return 0, posError(pos, len(src))
 		}
 
 		n := int64(u32le(src[pos+4 : pos+8]))
-		fmt.Printf("pos = 0x%08X = %10d (+8)    len = 0x%08X = %10d    %s\n",
-			pos, pos, n, n, clean(src[pos:pos+4]))
+		isWEBPANMF := isWEBP && (depth == 1) && (string(src[pos:pos+4]) == "ANMF")
+		fmt.Printf("pos: 0x%08X %10d +8, len: 0x%08X %10d, dep: %d, %s\n",
+			pos, pos, n, n, depth, clean(src[pos:pos+4]))
 		pos += 8
 		if (n & 1) != 0 {
 			n++
 		}
 
 		if int64(len(src)-pos) < n {
-			return posError(pos, len(src))
-		}
-		pos += int(n)
-	}
+			return 0, posError(pos, len(src))
 
-	fmt.Printf("pos = 0x%08X = %10d                                          ~~~~\n",
-		pos, pos)
-	return nil
+		} else if isWEBPANMF && (n > 16) {
+			pos1, err := do(src[:int64(pos)+n], depth+1, pos+16)
+			if err != nil {
+				return 0, err
+			}
+			pos = pos1
+
+		} else {
+			pos += int(n)
+		}
+	}
+	return pos, nil
 }
 
+var isWEBP bool
+
 func posError(pos int, lenSrc int) error {
-	return fmt.Errorf("bad RIFF, pos = 0x%08X = %10d, len(src) = 0x%08X = %10d",
+	return fmt.Errorf("bad RIFF, pos: 0x%08X %10d, len(src): 0x%08X %10d",
 		pos, pos, lenSrc, lenSrc)
 }
 
