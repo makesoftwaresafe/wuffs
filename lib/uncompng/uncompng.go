@@ -35,11 +35,11 @@
 // may be better (faster) overall to skip any compression and decompression on
 // either side of the communication channel.
 //
-// The Encoder.Encode method also makes no further memory allocations (above
-// whatever its given io.Writer makes, if any). It is a lower-level API. See
-// the encodeImage function in this package's test code for a higher-level API
-// (with more dependencies and without the no-allocation guarantee) that takes
-// an image.Image argument.
+// The Encoder and AnimationEncoder methods also make no further memory
+// allocations (above whatever its given io.Writer makes, if any). They are
+// lower-level APIs. See the encodeImage function in this package's test code
+// for a higher-level API (with more dependencies and without the no-allocation
+// guarantee) that takes an image.Image argument.
 package uncompng
 
 import (
@@ -101,7 +101,7 @@ const (
 )
 
 // Encoder is an opaque type that can convert a slice of pixel data to
-// PNG-formatted bytes.
+// PNG-formatted bytes. For APNG (Animated PNG), see AnimationEncoder.
 //
 // It contains all of the buffers needed for the Encode method. Once the
 // Encoder itself is allocated, Encoder.Encode makes no further allocations
@@ -155,18 +155,57 @@ type Encoder struct {
 	//
 	// After that long preamble, here's the data layout of the buf field. Each
 	// time a slice of buf is passed to an io.Writer, it contains exactly one
-	// IDAT chunk. The final time will also contain an IEND chunk after the
-	// IDAT chunk, unless it won't fit, in which case there will be one more
-	// Write call with just the 12-byte IEND chunk (and no IDAT chunk).
+	// IDAT chunk (or fdAT chunk, for animated PNG). The final time will also
+	// contain an IEND chunk after the IDAT/fdAT chunk, unless it won't fit, in
+	// which case there will be one more Write call with just the 12-byte IEND
+	// chunk (and no IDAT/fdAT chunk).
 	//
-	// For all but the first Write, the 4-byte IDAT chunk length starts at
-	// buf[0x0000:]. For the first Write, it will start at buf[0x0021:], since
-	// it is preceded by the magic signature and the IHDR chunk.
+	// When Encode'ing still PNGs, for all but the first Write, the 4-byte
+	// IDAT/fdAT chunk length starts at buf[0x0000:]. For the first Write, it
+	// will start at buf[0x0021:], since it is preceded by the magic signature
+	// and the IHDR chunk.
 	//
-	// Either way, each IDAT chunk contains exactly one DEFLATE block (an
+	// Either way, each IDAT/fdAT chunk contains exactly one DEFLATE block (an
 	// uncompressed block). The very first IDAT (in the very first Write) also
 	// contains the 2-byte ZLIB header. The very last IDAT also contains the
 	// 4-byte Adler-32 checksum.
+	//
+	// For example, here's how buf might be filled (four times) and shipped out
+	// to an io.Writer, when calling Encode to produce a still image.
+	//
+	// +--------------------------------------+
+	// | MAGIC | IHDR | IDAT                  |    Encode
+	// +--------------------------------------+    :
+	// | IDAT                                 |    :
+	// +--------------------------------------+    :
+	// | IDAT                                 |    :
+	// +--------------------------------------+    :
+	// | IDAT       | IEND |      unused      |    :
+	// +--------------------------------------+
+	//
+	// The buf-packing is more complicated for an animated PNG. Reference (§).
+	//
+	// +--------------------------------------+
+	// | MAGIC | IHDR | acTL |     unused     |    EncodeHeader
+	// +--------------------------------------+
+	// | fcTL | IDAT                          |    EncodeFrame
+	// +--------------------------------------+    :
+	// | IDAT                                 |    :
+	// +--------------------------------------+    :
+	// | IDAT       |          unused         |    :
+	// +--------------------------------------+
+	// | fcTL | fdAT                          |    EncodeFrame
+	// +--------------------------------------+    :
+	// | fdAT                                 |    :
+	// +--------------------------------------+    :
+	// | fdAT       |          unused         |    :
+	// +--------------------------------------+
+	// | fcTL | fdAT                          |    EncodeFrame
+	// +--------------------------------------+    :
+	// | fdAT                                 |    :
+	// +--------------------------------------+    :
+	// | fdAT       | IEND |      unused      |    :
+	// +--------------------------------------+
 	//
 	// Each DEFLATE uncompressed block's payload spans e.buf[ei:ej], for two
 	// indexes ei and ej, either explicit local variables or implicit state.
@@ -182,12 +221,47 @@ type Encoder struct {
 	// checksum state, as these 4 bytes won't be overwritten unless emitting
 	// the final IDAT chunk (containing the final DEFLATE block).
 	buf [65536]byte
+
+	// For still PNG images, there's 1 Encode call, which leads to:
+	//
+	//  - 1 encodeImageHeader call. This sets buf to hold the magic signature,
+	//    IHDR chunk and the start of the first IDAT chunk, but does not write
+	//    to the io.Writer yet.
+	//  - 1 encodeFramePayload call, with frameTypeStill. This fills in the
+	//    rest of the first IDAT, and all of any remaining IDATs, and the final
+	//    IEND, writing to the io.Writer one or more times (on every flush
+	//    call, and possibly once more for the IEND chunk). Each flush is
+	//    passed frameTypeStill.
+	//
+	// For animated PNG images, there's 1 EncodeHeader call, which leads to...
+	//
+	//  - 1 encodeImageHeader call. This sets buf to hold the magic signature,
+	//    IHDR chunk and acTL chunk, but not any part of any IDAT chunks. It
+	//    does, however, write to the io.Writer.
+	//
+	// ...and then N EncodeFrame calls, N = numFrames, each of which leads to:
+	//
+	//  - 1 encodeFrameHeader call. This sets buf to hold the fcTL chunk and
+	//    the start of an IDAT/fdAT chunk, but does not write to the io.Writer.
+	//  - 1 encodeFramePayload call. This fills in the rest of the first
+	//    IDAT/fdAT, and all of any remaining IDATs/fdATs for that frame (and
+	//    the IEND if the last frame), writing to the io.Writer via flush,
+	//    similar to the still image case.
+	//
+	// For animated PNG images, the frameType argument, for encodeFramePayload
+	// and flush, will have the frameTypeBitAnimated bit on. Of the N frames,
+	// the frameTypeBitFirstFrame and frameTypeBitLastFrame bits are on for the
+	// first and last frames. If N == 1, both bits are set for the only frame.
 }
 
+type frameType byte
+
 const (
-	eiFirst = 0x0030
-	eiLater = 0x000D
-	ejMax   = 0xFFF8
+	frameTypeBitFirstFrame = frameType(1)
+	frameTypeBitLastFrame  = frameType(2)
+	frameTypeBitAnimated   = frameType(4)
+
+	frameTypeStill = frameTypeBitFirstFrame | frameTypeBitLastFrame
 )
 
 // Encode writes the pixel data to w. It makes no allocations above whatever
@@ -196,24 +270,50 @@ const (
 // pix holds the pixel data, either 1 or 4 bytes per pixel (doubled for
 // Depth16) depending on the colorType. width and height are measured in
 // pixels. stride is measured in bytes. depth must be either Depth8 or Depth16.
-func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width int, height int, pix []byte, stride int) error {
-	if (width < 0) || (height < 0) ||
-		((depth != Depth8) && (depth != Depth16)) ||
-		(colorType.pngFileFormatEncoding() == 0xFF) {
-		return errors.New("uncompng: invalid argument")
-	} else if (width > 0xFFFFFF) || (height > 0xFFFFFF) {
-		return errors.New("uncompng: unsupported image size")
+func (e *Encoder) Encode(
+	w io.Writer,
+	depth Depth,
+	colorType ColorType,
+	width int,
+	height int,
+	pix []byte,
+	stride int) error {
+
+	if err := checkArguments(depth, colorType, width, height, 1, 0); err != nil {
+		return err
 	}
 
-	e.init(width, height, depth, colorType)
-	ej := eiFirst
+	ej := e.encodeImageHeader(depth, colorType, width, height, 0, 0)
+	return e.encodeFramePayload(
+		w, frameTypeStill, nil, depth, colorType, width, height, pix, stride, ej)
+}
+
+func (e *Encoder) encodeFramePayload(
+	w io.Writer,
+	fType frameType,
+	seqNumPtr *uint32,
+	depth Depth,
+	colorType ColorType,
+	width int,
+	height int,
+	pix []byte,
+	stride int,
+	ej int) (err error) {
+
+	// AdlerB=0, Adler32A=1.
+	e.buf[0xFFFC] = 0
+	e.buf[0xFFFD] = 0
+	e.buf[0xFFFE] = 0
+	e.buf[0xFFFF] = 1
+
+	const ejMax = 0xFFF8
 
 	for y := 0; y < height; y++ {
 		if (ej + 1) > ejMax {
-			if err := e.flush(w, ej, false); err != nil {
+			ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+			if err != nil {
 				return err
 			}
-			ej = eiLater
 		}
 		e.buf[ej+0] = 0 // PNG 'none' filter.
 		ej += 1
@@ -225,10 +325,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:1*width]
 			for x := 0; x < width; x++ {
 				if (ej + 1) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				ej += 1
@@ -239,10 +339,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:4*width]
 			for x := 0; x < width; x++ {
 				if (ej + 3) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				e.buf[ej+1] = row[1]
@@ -255,10 +355,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:4*width]
 			for x := 0; x < width; x++ {
 				if (ej + 4) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				e.buf[ej+1] = row[1]
@@ -272,10 +372,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:2*width]
 			for x := 0; x < width; x++ {
 				if (ej + 2) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				e.buf[ej+1] = row[1]
@@ -287,10 +387,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:8*width]
 			for x := 0; x < width; x++ {
 				if (ej + 6) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				e.buf[ej+1] = row[1]
@@ -306,10 +406,10 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 			row = row[:8*width]
 			for x := 0; x < width; x++ {
 				if (ej + 8) > ejMax {
-					if err := e.flush(w, ej, false); err != nil {
+					ej, err = e.flush(w, fType, seqNumPtr, ej, false)
+					if err != nil {
 						return err
 					}
-					ej = eiLater
 				}
 				e.buf[ej+0] = row[0]
 				e.buf[ej+1] = row[1]
@@ -325,10 +425,18 @@ func (e *Encoder) Encode(w io.Writer, depth Depth, colorType ColorType, width in
 		}
 	}
 
-	return e.flush(w, ej, true)
+	_, err = e.flush(w, fType, seqNumPtr, ej, true)
+	return err
 }
 
-func (e *Encoder) init(width int, height int, depth Depth, colorType ColorType) {
+func (e *Encoder) encodeImageHeader(
+	depth Depth,
+	colorType ColorType,
+	width int,
+	height int,
+	numFrames uint32,
+	numPlays uint32) int {
+
 	// PNG magic signature.
 	e.buf[0x0000] = 0x89
 	e.buf[0x0001] = 'P'
@@ -370,7 +478,36 @@ func (e *Encoder) init(width int, height int, depth Depth, colorType ColorType) 
 	e.buf[0x001F] = byte(ihdrCRC32 >> 8)
 	e.buf[0x0020] = byte(ihdrCRC32 >> 0)
 
-	// IDAT chunk length placeholder.
+	if numFrames > 0 {
+		// acTL chunk length.
+		e.buf[0x0021] = 0
+		e.buf[0x0022] = 0
+		e.buf[0x0023] = 0
+		e.buf[0x0024] = 0x08
+		// acTL chunk type.
+		e.buf[0x0025] = 'a'
+		e.buf[0x0026] = 'c'
+		e.buf[0x0027] = 'T'
+		e.buf[0x0028] = 'L'
+		// acTL chunk payload.
+		e.buf[0x0029] = byte(numFrames >> 24)
+		e.buf[0x002A] = byte(numFrames >> 16)
+		e.buf[0x002B] = byte(numFrames >> 8)
+		e.buf[0x002C] = byte(numFrames >> 0)
+		e.buf[0x002D] = byte(numPlays >> 24)
+		e.buf[0x002E] = byte(numPlays >> 16)
+		e.buf[0x002F] = byte(numPlays >> 8)
+		e.buf[0x0030] = byte(numPlays >> 0)
+		// acTL CRC-32/IEEE checksum.
+		actlCRC32 := crc32IEEE(e.buf[0x0025:0x0031])
+		e.buf[0x0031] = byte(actlCRC32 >> 24)
+		e.buf[0x0032] = byte(actlCRC32 >> 16)
+		e.buf[0x0033] = byte(actlCRC32 >> 8)
+		e.buf[0x0034] = byte(actlCRC32 >> 0)
+		return 0x0035
+	}
+
+	// IDAT chunk length placeholder. idatChunkStart is 0x0021.
 	e.buf[0x0021] = 0
 	e.buf[0x0022] = 0
 	e.buf[0x0023] = 0
@@ -389,16 +526,13 @@ func (e *Encoder) init(width int, height int, depth Depth, colorType ColorType) 
 	e.buf[0x002D] = 0
 	e.buf[0x002E] = 0
 	e.buf[0x002F] = 0
-	// eiFirst is therefore 0x0030.
-
-	// AdlerB=0, Adler32A=1.
-	e.buf[0xFFFC] = 0
-	e.buf[0xFFFD] = 0
-	e.buf[0xFFFE] = 0
-	e.buf[0xFFFF] = 1
+	return 0x0030
 }
 
-func (e *Encoder) updateAdler32(ei int, ej int) {
+func (e *Encoder) updateAdler32(
+	ei int,
+	ej int) {
+
 	b := (uint32(e.buf[0xFFFC]) << 8) | uint32(e.buf[0xFFFD])
 	a := (uint32(e.buf[0xFFFE]) << 8) | uint32(e.buf[0xFFFF])
 	for ei < ej {
@@ -419,34 +553,52 @@ func (e *Encoder) updateAdler32(ei int, ej int) {
 	e.buf[0xFFFF] = byte(a >> 0)
 }
 
-func (e *Encoder) flush(w io.Writer, ej int, final bool) error {
-	// Update the IDAT chunk length placeholder.
-	crc32Start, ei := 0, 0
-	if e.buf[0x0004] == 0x0D { // First IDAT chunk.
-		idatChunkLen := ej - 0x0029
-		if final {
-			idatChunkLen += 4
-		}
-		e.buf[0x0021] = byte(idatChunkLen >> 24)
-		e.buf[0x0022] = byte(idatChunkLen >> 16)
-		e.buf[0x0023] = byte(idatChunkLen >> 8)
-		e.buf[0x0024] = byte(idatChunkLen >> 0)
-		crc32Start, ei = 0x0025, eiFirst
-	} else { // Later IDAT chunk.
-		idatChunkLen := ej - 0x0008
-		if final {
-			idatChunkLen += 4
-		}
-		e.buf[0x0000] = byte(idatChunkLen >> 24)
-		e.buf[0x0001] = byte(idatChunkLen >> 16)
-		e.buf[0x0002] = byte(idatChunkLen >> 8)
-		e.buf[0x0003] = byte(idatChunkLen >> 0)
-		crc32Start, ei = 0x0004, eiLater
+func (e *Encoder) flush(
+	w io.Writer,
+	fType frameType,
+	seqNumPtr *uint32,
+	ej int,
+	finalIDATOfFrame bool) (retEj int, retErr error) {
+
+	// Calculate where the IDAT/fdAT chunk starts, in e.buf. See (§).
+	idatChunkStart := 0
+	if e.buf[0x0007] == 0x0A {
+		// 0x0A is magicSignature[7]. First IDAT chunk of a still image.
+		idatChunkStart = 0x0021
+	} else if e.buf[0x0007] == 0x4C {
+		// 0x4C is "????fcTL"[7]. First IDAT/fdAT chunk of an animated frame.
+		idatChunkStart = 0x0026
+	} else if e.buf[0x0007] == 0x54 {
+		// 0x54 is "??????AT"[7]. Later IDAT/fdAT chunk.
+		idatChunkStart = 0x0000
+	} else {
+		return 0, errors.New("uncompng: unreachable")
 	}
+
+	// 13 is the 0x000D in "Write... 0x000D bytes total" below.
+	ei := idatChunkStart + 13
+	if e.buf[0x0007] != 0x54 {
+		// 2 more bytes for the ZLIB header (CM, CINFO, FDICT, FLEVEL).
+		ei += 2
+	}
+	if (fType & frameTypeBitFirstFrame) == 0 {
+		// fdAT chunks are longer than IDAT chunks by 4 bytes.
+		ei += 4
+	}
+
+	// Update the IDAT/fdAT chunk length placeholder.
+	idatChunkLen := ej - (idatChunkStart + 8)
+	if finalIDATOfFrame {
+		idatChunkLen += 4 // The Adler-32 checksum occupies 4 bytes.
+	}
+	e.buf[idatChunkStart+0] = byte(idatChunkLen >> 24)
+	e.buf[idatChunkStart+1] = byte(idatChunkLen >> 16)
+	e.buf[idatChunkStart+2] = byte(idatChunkLen >> 8)
+	e.buf[idatChunkStart+3] = byte(idatChunkLen >> 0)
 
 	// Update the DEFLATE uncompressed block header placeholder.
 	deflateBlockLen := ej - ei
-	e.buf[ei-5] = btou8(final)
+	e.buf[ei-5] = btou8(finalIDATOfFrame)
 	e.buf[ei-4] = 0x00 ^ byte(deflateBlockLen>>0)
 	e.buf[ei-3] = 0x00 ^ byte(deflateBlockLen>>8)
 	e.buf[ei-2] = 0xFF ^ byte(deflateBlockLen>>0)
@@ -454,7 +606,7 @@ func (e *Encoder) flush(w io.Writer, ej int, final bool) error {
 
 	// Update (and maybe write) the Adler-32 checksum.
 	e.updateAdler32(ei, ej)
-	if final {
+	if finalIDATOfFrame {
 		e.buf[ej+0] = e.buf[0xFFFC]
 		e.buf[ej+1] = e.buf[0xFFFD]
 		e.buf[ej+2] = e.buf[0xFFFE]
@@ -463,28 +615,44 @@ func (e *Encoder) flush(w io.Writer, ej int, final bool) error {
 	}
 
 	// Write the CRC-32/IEEE checksum.
-	idatCRC32 := crc32IEEE(e.buf[crc32Start:ej])
+	idatCRC32 := crc32IEEE(e.buf[idatChunkStart+4 : ej])
 	e.buf[ej+0] = byte(idatCRC32 >> 24)
 	e.buf[ej+1] = byte(idatCRC32 >> 16)
 	e.buf[ej+2] = byte(idatCRC32 >> 8)
 	e.buf[ej+3] = byte(idatCRC32 >> 0)
 	ej += 4
 
-	if !final {
+	if !finalIDATOfFrame {
 		if _, err := w.Write(e.buf[:ej]); err != nil {
-			return err
+			return 0, err
 		}
 		// Write (or reserve space for) 0x000D bytes total:
-		//  - 4 bytes for the IDAT chunk length placeholder.
-		//  - 4 bytes for the IDAT chunk type.
+		//  - 4 bytes for the IDAT/fdAT chunk length placeholder.
+		//  - 4 bytes for the IDAT/fdAT chunk type.
 		//  - 5 bytes for the DEFLATE uncompressed block header placeholder.
-		//
-		// eiLater is therefore 0x000D.
-		e.buf[0x0004] = 'I'
-		e.buf[0x0005] = 'D'
+		t := fType & frameTypeBitFirstFrame
+		e.buf[0x0004] = "fI"[t]
+		e.buf[0x0005] = "dD"[t]
 		e.buf[0x0006] = 'A'
 		e.buf[0x0007] = 'T'
-		return nil
+		if (t != 0) || (seqNumPtr == nil) {
+			return 0x000D + 0, nil
+		}
+
+		seqNum := *seqNumPtr
+		*seqNumPtr++
+		e.buf[0x0008] = byte(seqNum >> 24)
+		e.buf[0x0009] = byte(seqNum >> 16)
+		e.buf[0x000A] = byte(seqNum >> 8)
+		e.buf[0x000B] = byte(seqNum >> 0)
+		return 0x000D + 4, nil
+	}
+
+	if (fType & frameTypeBitLastFrame) == 0 {
+		if _, err := w.Write(e.buf[:ej]); err != nil {
+			return 0, err
+		}
+		return 0, nil
 	}
 
 	const iendChunk = "\x00\x00\x00\x00IEND\xAE\x42\x60\x82"
@@ -495,27 +663,230 @@ func (e *Encoder) flush(w io.Writer, ej int, final bool) error {
 	}
 
 	if _, err := w.Write(e.buf[:ej]); err != nil {
-		return err
+		return 0, err
 	}
 
 	if writeSeparateIENDChunk {
 		copy(e.buf[:], iendChunk)
 		if _, err := w.Write(e.buf[:len(iendChunk)]); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
+	return 0, nil
+}
+
+// AnimationEncoder is like Encoder but for APNG (Animated PNG), not still PNG.
+//
+// It contains all of the buffers needed for the EncodeXxx methods. Once the
+// AnimationEncoder itself is allocated, AnimationEncoder.EncodeXxx makes no
+// further allocations (above whatever its given io.Writer makes, if any).
+//
+// To create one APNG, call EncodeHeader once (with a given numFrames > 0
+// argument) and then EncodeFrame numFrames times.
+//
+// It can be re-used (but it is not thread-safe). One AnimationEncoder can make
+// multiple (1 EncodeHeader + N EncodeFrame) call sequences, potentially with
+// different N values, each producing a complete, stand-alone APNG image.
+type AnimationEncoder struct {
+	enc Encoder
+
+	depth     Depth
+	colorType ColorType
+
+	width     uint32
+	height    uint32
+	seqNum    uint32
+	numFrames uint32
+	curFrame  uint32
+}
+
+// EncodeHeader writes the APNG header to w. It makes no allocations above
+// whatever w.Write makes, if any.
+//
+// The arguments are similar to Encoder.Encode, as well as numFrames > 0 being
+// the number of animation frames and numPlays being the number of times each
+// animation frame is played (zero means to loop forever).
+func (e *AnimationEncoder) EncodeHeader(
+	w io.Writer,
+	depth Depth,
+	colorType ColorType,
+	width int,
+	height int,
+	numFrames uint32,
+	numPlays uint32) error {
+
+	if err := checkArguments(depth, colorType, width, height, numFrames, numPlays); err != nil {
+		return err
+	}
+
+	e.depth = depth
+	e.colorType = colorType
+
+	e.width = uint32(width)
+	e.height = uint32(height)
+	e.seqNum = 0
+	e.numFrames = numFrames
+	e.curFrame = 0
+
+	ej := e.enc.encodeImageHeader(depth, colorType, width, height, numFrames, numPlays)
+	_, err := w.Write(e.enc.buf[:ej])
+	return err
+}
+
+// EncodeFrame writes an animation frame to w. It makes no allocations above
+// whatever w.Write makes, if any.
+//
+// The arguments are similar to Encoder.Encode, as well as (delayNumerator /
+// delayDenominator) being how many seconds to display the frame. For example,
+// if delayDenominator == 1000, delayNumerator is measured in milliseconds.
+func (e *AnimationEncoder) EncodeFrame(
+	w io.Writer,
+	pix []byte,
+	stride int,
+	delayNumerator uint16,
+	delayDenominator uint16) error {
+
+	if e.numFrames == 0 {
+		return errors.New("uncompng: EncodeHeader was not called")
+	} else if e.curFrame >= e.numFrames {
+		return errors.New("uncompng: too many EncodeFrame calls")
+	} else if e.seqNum >= 0x80000000 {
+		return errors.New("uncompng: too many frames")
+	}
+
+	fType := frameTypeBitAnimated
+	if e.curFrame == 0 {
+		fType |= frameTypeBitFirstFrame
+	}
+	e.curFrame++
+	if e.curFrame == e.numFrames {
+		fType |= frameTypeBitLastFrame
+	}
+
+	ej := e.encodeFrameHeader(w, delayNumerator, delayDenominator)
+	return e.enc.encodeFramePayload(
+		w, fType, &e.seqNum, e.depth, e.colorType, int(e.width), int(e.height), pix, stride, ej)
+}
+
+func (e *AnimationEncoder) encodeFrameHeader(
+	w io.Writer,
+	delayNumerator uint16,
+	delayDenominator uint16) int {
+
+	// fcTL chunk length.
+	e.enc.buf[0x0000] = 0
+	e.enc.buf[0x0001] = 0
+	e.enc.buf[0x0002] = 0
+	e.enc.buf[0x0003] = 0x1A
+	// fcTL chunk type.
+	e.enc.buf[0x0004] = 'f'
+	e.enc.buf[0x0005] = 'c'
+	e.enc.buf[0x0006] = 'T'
+	e.enc.buf[0x0007] = 'L'
+	// fcTL payload.
+	e.enc.buf[0x0008] = byte(e.seqNum >> 24)
+	e.enc.buf[0x0009] = byte(e.seqNum >> 16)
+	e.enc.buf[0x000A] = byte(e.seqNum >> 8)
+	e.enc.buf[0x000B] = byte(e.seqNum >> 0)
+	e.enc.buf[0x000C] = byte(e.width >> 24)
+	e.enc.buf[0x000D] = byte(e.width >> 16)
+	e.enc.buf[0x000E] = byte(e.width >> 8)
+	e.enc.buf[0x000F] = byte(e.width >> 0)
+	e.enc.buf[0x0010] = byte(e.height >> 24)
+	e.enc.buf[0x0011] = byte(e.height >> 16)
+	e.enc.buf[0x0012] = byte(e.height >> 8)
+	e.enc.buf[0x0013] = byte(e.height >> 0)
+	e.enc.buf[0x0014] = 0 // X offset.
+	e.enc.buf[0x0015] = 0
+	e.enc.buf[0x0016] = 0
+	e.enc.buf[0x0017] = 0
+	e.enc.buf[0x0018] = 0 // Y offset.
+	e.enc.buf[0x0019] = 0
+	e.enc.buf[0x001A] = 0
+	e.enc.buf[0x001B] = 0
+	e.enc.buf[0x001C] = byte(delayNumerator >> 8)
+	e.enc.buf[0x001D] = byte(delayNumerator >> 0)
+	e.enc.buf[0x001E] = byte(delayDenominator >> 8)
+	e.enc.buf[0x001F] = byte(delayDenominator >> 0)
+	e.enc.buf[0x0020] = 0 // APNG_DISPOSE_OP_NONE.
+	e.enc.buf[0x0021] = 0 // APNG_BLEND_OP_SOURCE.
+	// fcTL CRC-32/IEEE checksum.
+	fctlCRC32 := crc32IEEE(e.enc.buf[0x0004:0x0022])
+	e.enc.buf[0x0022] = byte(fctlCRC32 >> 24)
+	e.enc.buf[0x0023] = byte(fctlCRC32 >> 16)
+	e.enc.buf[0x0024] = byte(fctlCRC32 >> 8)
+	e.enc.buf[0x0025] = byte(fctlCRC32 >> 0)
+
+	useIDAT := 0
+	if e.seqNum == 0 {
+		useIDAT = 1
+	}
+	e.seqNum++
+
+	// IDAT/fdAT chunk length placeholder. idatChunkStart is 0x0026.
+	e.enc.buf[0x0026] = 0
+	e.enc.buf[0x0027] = 0
+	e.enc.buf[0x0028] = 0
+	e.enc.buf[0x0029] = 0
+	// IDAT/fdAT chunk type.
+	e.enc.buf[0x002A] = "fI"[useIDAT]
+	e.enc.buf[0x002B] = "dD"[useIDAT]
+	e.enc.buf[0x002C] = 'A'
+	e.enc.buf[0x002D] = 'T'
+	ej := 0x002E
+
+	if useIDAT == 0 {
+		e.enc.buf[0x002E] = byte(e.seqNum >> 24)
+		e.enc.buf[0x002F] = byte(e.seqNum >> 16)
+		e.enc.buf[0x0030] = byte(e.seqNum >> 8)
+		e.enc.buf[0x0031] = byte(e.seqNum >> 0)
+		e.seqNum++
+		ej = 0x0032
+	}
+
+	// ZLIB header: CM=8, CINFO=7, FDICT=0, FLEVEL=0. See RFC 1950.
+	e.enc.buf[ej+0x00] = 0x78
+	e.enc.buf[ej+0x01] = 0x01
+	// DEFLATE uncompressed block header, with 4-byte placeholder for length.
+	e.enc.buf[ej+0x02] = 0
+	e.enc.buf[ej+0x03] = 0
+	e.enc.buf[ej+0x04] = 0
+	e.enc.buf[ej+0x05] = 0
+	e.enc.buf[ej+0x06] = 0
+	return ej + 0x07
+}
+
+func checkArguments(
+	depth Depth,
+	colorType ColorType,
+	width int,
+	height int,
+	numFrames uint32,
+	numPlays uint32) error {
+
+	if ((depth != Depth8) && (depth != Depth16)) ||
+		(colorType.pngFileFormatEncoding() == 0xFF) ||
+		(width <= 0) || (height <= 0) || (numFrames <= 0) {
+		return errors.New("uncompng: invalid argument")
+	} else if (width > 0xFFFFFF) || (height > 0xFFFFFF) {
+		return errors.New("uncompng: unsupported image size")
+	}
 	return nil
 }
 
-func btou8(a bool) uint8 {
+func btou8(
+	a bool) uint8 {
+
 	if a {
 		return 1
 	}
 	return 0
 }
 
-func crc32IEEE(b []byte) uint32 {
+func crc32IEEE(
+	b []byte) uint32 {
+
 	hash := uint32(0xFFFF_FFFF)
 	for _, v := range b {
 		hash = crc32IEEETable[uint8(hash)^v] ^ (hash >> 8)
