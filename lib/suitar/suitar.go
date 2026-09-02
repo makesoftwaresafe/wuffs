@@ -471,6 +471,11 @@ func (w *Writer) Close() error {
 	if err := w.flush(); err != nil {
 		return err
 	}
+	clear(w.nameBuf[:1024])
+	if _, err := w.w.Write(w.nameBuf[:1024]); err != nil {
+		w.err = err
+		return err
+	}
 	w.err = errClosed
 	return nil
 }
@@ -503,8 +508,22 @@ func (r *Reader) Next() (Header, error) {
 		}
 	}
 
-	if _, err := io.ReadFull(r.r, r.block[:]); err != nil {
+	if _, err := readFullNoEOF(r.r, r.block[:]); err != nil {
 		r.err = err
+		return Header{}, r.err
+	} else if r.block[0x09C] == 0 {
+		// SUITAR ends with 2 blocks (1024 bytes) of zeroes.
+		if !isAllZeroes(r.block[:]) {
+			r.err = errBadHeader
+			return Header{}, r.err
+		} else if _, err := readFullNoEOF(r.r, r.block[:]); err != nil {
+			r.err = err
+			return Header{}, r.err
+		} else if !isAllZeroes(r.block[:]) {
+			r.err = errBadHeader
+			return Header{}, r.err
+		}
+		r.err = io.EOF
 		return Header{}, r.err
 	}
 
@@ -545,7 +564,6 @@ func (r *Reader) Next() (Header, error) {
 		Mode:     mode,
 		ModTime:  time.Unix(modTime, 0),
 	}, nil
-
 }
 
 func parseBlock0(b *block) (uint64, error) {

@@ -30,8 +30,7 @@ BZIP2", etc. A separate compression step wrapping SUITAR is feasible, just like
 wrapping TAR, but is out of scope of this document.
 
 Like TAR, SUITAR files are a sequence of independent entries (files or
-directories). Independent means that the concatenation of two valid SUITAR
-files is itself a valid SUITAR file. Like JSON map keys, duplicate names are
+directories). Independent means that, like JSON map keys, duplicate names are
 valid, although some decoders may choose to reject them.
 
 A file's entry does not need to be preceded by explicit entries for that file's
@@ -97,8 +96,9 @@ and transform Shift-JIS encoded names to equivalent and valid UTF-8.
 
 ## File Structure
 
-SUITAR files are a sequence of independent entries and each entry occupies an
-integer number of 512-byte blocks:
+SUITAR files are a sequence of entries, followed by a 1024-byte "End Of File"
+marker. The EOF marker's bytes are all NUL. Each entry occupies an integer
+number of 512-byte blocks:
 
 - 1 `GNUTYPE_LONGNAME` header block.
 - 1 or more payload blocks containing the file or directory name.
